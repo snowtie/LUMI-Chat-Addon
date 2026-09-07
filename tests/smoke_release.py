@@ -238,13 +238,14 @@ def test_transformer() -> None:
         javac = str(candidates[0] / "javac.exe")
         java = str(candidates[0] / "java.exe")
     check(bool(javac and java), "JDK 25 was not found")
-    source = PROJECT / "tests" / "java" / "com" / "snowtie" / "lumichataddon" / "TransformerSmoke.java"
+    source_root = PROJECT / "tests" / "java" / "com" / "snowtie" / "lumichataddon"
+    sources = [source_root / "TransformerSmoke.java", source_root / "DialogBridgeSmoke.java"]
     with tempfile.TemporaryDirectory() as directory:
         classes = Path(directory) / "classes"
         classes.mkdir()
         classpath = os.pathsep.join((str(sdk), str(PLUGIN), str(chat)))
         compile_result = subprocess.run(
-            [javac, "-encoding", "UTF-8", "-cp", classpath, "-d", str(classes), str(source)],
+            [javac, "-encoding", "UTF-8", "-cp", classpath, "-d", str(classes), *map(str, sources)],
             text=True,
             capture_output=True,
             encoding="utf-8",
@@ -258,6 +259,14 @@ def test_transformer() -> None:
             encoding="utf-8",
         )
         check(run_result.returncode == 0, run_result.stdout + run_result.stderr)
+        dialog_result = subprocess.run(
+            [java, "-cp", os.pathsep.join((str(classes), classpath)),
+             "com.snowtie.lumichataddon.DialogBridgeSmoke"],
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+        )
+        check(dialog_result.returncode == 0, dialog_result.stdout + dialog_result.stderr)
 
 
 def test_helper_runtime() -> None:

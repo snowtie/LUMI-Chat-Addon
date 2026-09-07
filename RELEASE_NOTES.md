@@ -4,6 +4,7 @@
 
 - Addon 설정창의 잘린 안내문과 어긋난 카드 배치를 수정
 - GPT-SoVITS 설치를 별도 PowerShell 창으로 표시하고 중복 실행 차단
+- GPT-SoVITS 선택 시 Fish Audio 설정과 이전 Fish 키 오류가 남는 문제 수정
 
 ## 새 설치 방식
 
