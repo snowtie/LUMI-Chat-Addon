@@ -1,5 +1,10 @@
 # LUMI Chat Addon v1.1.0
 
+## 수정 사항
+
+- Addon 설정창의 잘린 안내문과 어긋난 카드 배치를 수정
+- GPT-SoVITS 설치를 별도 PowerShell 창으로 표시하고 중복 실행 차단
+
 ## 새 설치 방식
 
 - Little LUMI 1.2.0의 공식 코드 플러그인 API로 전환
