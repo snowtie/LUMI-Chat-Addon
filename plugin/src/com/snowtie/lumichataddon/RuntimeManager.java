@@ -128,7 +128,15 @@ final class RuntimeManager {
         Path manifest = dataRoot.resolve("tts-runtimes.json");
         extractResource("/tts-setup.ps1", script);
         extractResource("/tts-runtimes.json", manifest);
+        if (ttsSetupRunning(script)) {
+            throw new IOException("GPT-SoVITS 설치 창이 이미 열려 있습니다.");
+        }
         ProcessBuilder builder = new ProcessBuilder(
+                "cmd.exe",
+                "/d",
+                "/c",
+                "start",
+                "LUMI GPT-SoVITS Setup",
                 "powershell.exe",
                 "-NoProfile",
                 "-ExecutionPolicy",
@@ -141,7 +149,8 @@ final class RuntimeManager {
                 dataRoot.toString(),
                 "-RuntimeManifest",
                 manifest.toString());
-        return builder.inheritIO().start();
+        builder.directory(dataRoot.toFile());
+        return builder.start();
     }
 
     void noteVoiceUse() {
@@ -222,6 +231,13 @@ final class RuntimeManager {
                 // 다른 사용자나 보호된 프로세스는 건너뜁니다.
             }
         }));
+    }
+
+    private boolean ttsSetupRunning(Path script) {
+        String expected = script.toAbsolutePath().normalize().toString().toLowerCase(Locale.ROOT);
+        return ProcessHandle.allProcesses().anyMatch(process -> process.info().commandLine()
+                .map(commandLine -> commandLine.toLowerCase(Locale.ROOT).contains(expected))
+                .orElse(false));
     }
 
     private Path legacyRoot() {

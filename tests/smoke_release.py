@@ -128,6 +128,11 @@ def test_scripts() -> None:
     text = (PROJECT / "uninstall.ps1").read_text(encoding="utf-8")
     check("baseJarSha256" in text and "SHA256" in text, "uninstaller does not verify the JAR backup")
     check("[IO.File]::Replace" in text, "uninstaller does not atomically restore the JAR")
+    runtime_manager = (
+        PROJECT / "plugin" / "src" / "com" / "snowtie" / "lumichataddon" / "RuntimeManager.java"
+    ).read_text(encoding="utf-8")
+    check('"cmd.exe"' in runtime_manager and '"start"' in runtime_manager, "TTS setup does not open a visible console")
+    check("inheritIO()" not in runtime_manager, "TTS setup still inherits the hidden GUI console")
 
 
 def test_legacy_uninstaller() -> None:

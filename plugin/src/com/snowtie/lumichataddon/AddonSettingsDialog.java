@@ -13,9 +13,11 @@ import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.Desktop;
 import java.awt.Dimension;
-import java.awt.FlowLayout;
+import java.awt.Font;
+import java.awt.Insets;
 import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.net.URI;
@@ -24,6 +26,9 @@ import java.nio.file.Path;
 import java.util.Map;
 
 final class AddonSettingsDialog extends JDialog {
+    private static final int DIALOG_WIDTH = 620;
+    private static final int DIALOG_HEIGHT = 520;
+    private static final int CONTENT_WIDTH = 560;
     private static AddonSettingsDialog instance;
 
     private final PluginContext context;
@@ -49,12 +54,15 @@ final class AddonSettingsDialog extends JDialog {
         this.context = context;
         this.runtime = runtime;
         setDefaultCloseOperation(HIDE_ON_CLOSE);
+        setResizable(false);
         setLayout(new BorderLayout());
         add(content(), BorderLayout.CENTER);
         pack();
-        setMinimumSize(new Dimension(520, 390));
-        setLocationRelativeTo(null);
+        setMinimumSize(new Dimension(DIALOG_WIDTH, DIALOG_HEIGHT));
+        setSize(DIALOG_WIDTH, DIALOG_HEIGHT);
         context.manageWindow(this, "lumi-chat-addon-settings");
+        ensureUsableSize();
+        setLocationRelativeTo(null);
 
         chatGptButton.addActionListener(event -> connectChatGpt());
         claudeButton.addActionListener(event -> connectClaude());
@@ -63,36 +71,81 @@ final class AddonSettingsDialog extends JDialog {
 
     private JPanel content() {
         JPanel root = new JPanel();
-        root.setBorder(BorderFactory.createEmptyBorder(18, 18, 18, 18));
+        root.setBorder(BorderFactory.createEmptyBorder(22, 28, 22, 28));
         root.setLayout(new BoxLayout(root, BoxLayout.Y_AXIS));
-        JLabel intro = new JLabel("<html><b>LUMI Chat Addon 1.1.0</b><br>"
-                + "대화와 기억은 LUMI Chat이 맡고, 이 플러그인은 계정과 로컬 음성을 연결합니다.</html>");
-        root.add(intro);
-        root.add(Box.createVerticalStrut(14));
+        root.setPreferredSize(new Dimension(CONTENT_WIDTH, 450));
+
+        JPanel header = new JPanel();
+        header.setLayout(new BoxLayout(header, BoxLayout.Y_AXIS));
+        header.setAlignmentX(Component.LEFT_ALIGNMENT);
+        header.setMaximumSize(new Dimension(Integer.MAX_VALUE, 54));
+        JLabel title = new JLabel("LUMI Chat Addon 1.1.0");
+        title.setFont(title.getFont().deriveFont(Font.BOLD, title.getFont().getSize2D() + 4f));
+        title.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JLabel intro = new JLabel("대화와 기억은 LUMI Chat이 맡고, 이 플러그인은 계정과 로컬 음성을 연결합니다.");
+        intro.setAlignmentX(Component.LEFT_ALIGNMENT);
+        header.add(title);
+        header.add(Box.createVerticalStrut(5));
+        header.add(intro);
+        root.add(header);
+        root.add(Box.createVerticalStrut(16));
         root.add(row("ChatGPT", "기본 모델 GPT-5.6 Luna · 낮은 추론", chatGptStatus, chatGptButton));
         root.add(Box.createVerticalStrut(10));
         root.add(row("Claude", "공식 Claude Code 로그인과 구독 사용량을 사용", claudeStatus, claudeButton));
         root.add(Box.createVerticalStrut(10));
         root.add(row("LUMI GPT-SoVITS", "선택 기능 · 설치 창이 완료될 때까지 닫지 마세요", ttsStatus, ttsButton));
-        root.add(Box.createVerticalStrut(14));
-        JLabel note = new JLabel("<html>사용할 두뇌는 루미 AI 설정의 프로바이더에서 고릅니다.<br>"
-                + "집중 모드에서는 GPT-SoVITS 소리가 재생되지 않습니다.</html>");
+        root.add(Box.createVerticalStrut(16));
+        JPanel note = new JPanel();
+        note.setLayout(new BoxLayout(note, BoxLayout.Y_AXIS));
+        note.setAlignmentX(Component.LEFT_ALIGNMENT);
+        note.setMaximumSize(new Dimension(Integer.MAX_VALUE, 52));
+        note.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
+        JLabel providerNote = new JLabel("사용할 두뇌는 루미 AI 설정의 프로바이더에서 고릅니다.");
+        JLabel focusNote = new JLabel("집중 모드에서는 GPT-SoVITS 소리가 재생되지 않습니다.");
+        providerNote.setAlignmentX(Component.LEFT_ALIGNMENT);
+        focusNote.setAlignmentX(Component.LEFT_ALIGNMENT);
+        note.add(providerNote);
+        note.add(Box.createVerticalStrut(4));
+        note.add(focusNote);
         root.add(note);
         return root;
     }
 
     private static JPanel row(String title, String description, JLabel status, JButton action) {
-        JPanel row = new JPanel(new BorderLayout(12, 5));
+        JPanel row = new JPanel(new BorderLayout(12, 8));
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 96));
+        row.setPreferredSize(new Dimension(CONTENT_WIDTH, 96));
         row.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createEtchedBorder(),
-                BorderFactory.createEmptyBorder(10, 12, 10, 12)));
-        JLabel label = new JLabel("<html><b>" + title + "</b><br><small>" + description + "</small></html>");
-        JPanel bottom = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        bottom.add(status);
-        bottom.add(action);
-        row.add(label, BorderLayout.NORTH);
-        row.add(bottom, BorderLayout.CENTER);
+                BorderFactory.createEmptyBorder(10, 14, 10, 14)));
+
+        JPanel labels = new JPanel();
+        labels.setLayout(new BoxLayout(labels, BoxLayout.Y_AXIS));
+        JLabel heading = new JLabel(title);
+        heading.setFont(heading.getFont().deriveFont(Font.BOLD, heading.getFont().getSize2D() + 1f));
+        JLabel detail = new JLabel(description);
+        heading.setAlignmentX(Component.LEFT_ALIGNMENT);
+        detail.setAlignmentX(Component.LEFT_ALIGNMENT);
+        labels.add(heading);
+        labels.add(Box.createVerticalStrut(3));
+        labels.add(detail);
+
+        JPanel bottom = new JPanel(new BorderLayout(12, 0));
+        status.setFont(status.getFont().deriveFont(Font.BOLD));
+        action.setMargin(new Insets(4, 12, 4, 12));
+        action.putClientProperty("JButton.buttonType", "roundRect");
+        bottom.add(status, BorderLayout.WEST);
+        bottom.add(action, BorderLayout.EAST);
+        row.add(labels, BorderLayout.CENTER);
+        row.add(bottom, BorderLayout.SOUTH);
         return row;
+    }
+
+    private void ensureUsableSize() {
+        if (getWidth() < DIALOG_WIDTH || getHeight() < DIALOG_HEIGHT) {
+            setSize(Math.max(getWidth(), DIALOG_WIDTH), Math.max(getHeight(), DIALOG_HEIGHT));
+        }
     }
 
     private void refresh() {
