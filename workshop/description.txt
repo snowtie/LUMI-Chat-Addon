@@ -1,43 +1,39 @@
-[h1]LUMI to GPT[/h1]
+[h1]LUMI Chat Addon[/h1]
 
-LUMI Chat을 공식 Codex OAuth를 통해 ChatGPT 계정에 연결하는 확장 모드입니다.
+LUMI Chat에 ChatGPT 계정, Claude 계정과 선택형 LUMI GPT-SoVITS 목소리를 추가하는 비공식 코드 플러그인입니다.
 
-[b]비공식 커뮤니티 확장이며 STUDIO LUMI, LUMI Chat 제작자 또는 OpenAI의 공식 제품이 아닙니다.[/b]
+[b]STUDIO LUMI, LUMI Chat 제작자, OpenAI 또는 Anthropic의 공식 제품이 아닙니다.[/b]
 
 [h2]필수 항목[/h2]
 [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3794360578]LUMI Chat[/url]
 
-[h2]추가되는 기능[/h2]
+[h2]설치[/h2]
 [list]
-[*]별도 OpenAI API 키 없는 ChatGPT 장치 코드 OAuth
-[*]OpenAI 공식 Codex App Server 사용
+[*]LUMI Chat과 이 항목을 구독합니다.
+[*]Little LUMI를 다시 시작합니다.
+[*]트레이 또는 설정 → 모드에서 LUMI Chat Addon 설정을 엽니다.
+[*]ChatGPT 또는 Claude 계정을 연결합니다.
+[*]루미 AI 설정 → 두뇌에서 사용할 계정을 선택합니다.
+[/list]
+
+별도 설치기나 JAR 패치가 필요 없습니다. 앱 업데이트가 되어도 플러그인과 설정이 유지됩니다.
+
+[h2]추가 기능[/h2]
+[list]
+[*]공식 Codex App Server를 이용한 ChatGPT 계정 연결
+[*]공식 Claude Code를 이용한 Claude 계정 연결
 [*]저사용량 GPT-5.6 Luna 기본 모델
 [*]혼잣말과 화면 구경 기본 비활성화
-[*]계정·현재 버전 UI와 GitHub 새 버전 자동 확인
-[*]Little LUMI의 루미 AI 설정에 ChatGPT (OAuth)·GPT-SoVITS 프로바이더 추가
-[*]완성된 긴 답변 전체 반환
-[*]대화 말풍선 6~60초 안정화
-[*]로컬 GPT-SoVITS 선행 준비·자동 절전·초절전
-[*]집중 모드 즉시 무음과 오래된 음성 자동 취소
-[*]Python 없는 Codex 앱·CLI 작업 완료 알림 MCP
-[*]기존 설치에 LUMI TTS만 추가하는 설치 모드와 상세 오류 로그
+[*]루미 AI 설정에 계정 프로바이더와 GPT-SoVITS 추가
+[*]GPU 자동 호환 판정과 CPU 대체
+[*]집중 모드 즉시 무음, 음성 절전 및 초절전
+[*]Codex 작업 완료 말풍선 알림 MCP
 [/list]
 
-[h2]LUMI Chat 기능을 그대로 사용합니다[/h2]
-[list]
-[*]꼬미 더블클릭·우클릭 대화창과 말풍선
-[*]기억과 캐릭터별 페르소나
-[*]자율 혼잣말과 화면 구경
-[*]TTS, 캐릭터별 목소리와 입 모양
-[*]집중 모드 중 음성 차단
-[/list]
+[h2]LUMI Chat 기능 유지[/h2]
+대화창, 말풍선, 기억, 페르소나, 자동 동작, 캐릭터별 음성과 입 모양은 LUMI Chat의 기존 경로를 그대로 사용합니다.
 
-[h2]사용량[/h2]
-대화는 일반 ChatGPT 웹 메시지가 아니라 로그인한 계정의 Codex 사용량과 한도를 따릅니다.
+[h2]선택형 GPT-SoVITS[/h2]
+애드온 설정의 GPT-SoVITS 설치 또는 복구를 누르세요. 공식 통합판은 약 6~9GB, 허가된 LUMI 음성 가중치는 약 420MB입니다. 완료 문구가 나올 때까지 설치 창을 닫지 마세요.
 
-[h2]설치[/h2]
-LUMI Chat과 이 항목을 구독하고 Little LUMI를 한 번 실행한 뒤 종료하세요. 이 항목의 [b]LUMI-to-GPT\INSTALL.cmd[/b]를 실행하고 Little LUMI를 다시 시작하면 됩니다. 설치기는 사용자의 Little LUMI JAR에 작은 연동 패치를 적용하며 원본 백업을 만듭니다.
-
-현재 실행 파일은 코드 서명되지 않아 처음 실행할 때 Windows SmartScreen 경고가 표시될 수 있습니다.
-
-이 확장은 LUMI Chat의 파일을 포함하지 않습니다. Steam 항목의 필요 항목에서 LUMI Chat을 별도 구독합니다.
+ChatGPT 대화에는 계정의 Codex 사용량이, Claude 대화에는 계정의 Claude Code 사용량이 적용됩니다.

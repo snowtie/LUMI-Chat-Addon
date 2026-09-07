@@ -5,9 +5,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$AppPath = Join-Path $env:LOCALAPPDATA "LumiToGPT\app\lumi-to-gpt.exe"
-$OutputPath = Join-Path $env:LOCALAPPDATA "LumiToGPT\gpt-sovits-self-test.wav"
-$LogPath = Join-Path $env:LOCALAPPDATA "LumiToGPT\gpt-sovits.log"
+$DataRoot = Join-Path $env:LOCALAPPDATA "LumiChatAddon"
+$AppPath = Join-Path $DataRoot "runtime\lumi-chat-addon-helper-v1.1.0-windows-x64.exe"
+$OutputPath = Join-Path $DataRoot "gpt-sovits-self-test.wav"
+$LogPath = Join-Path $DataRoot "gpt-sovits.log"
 $env:LUMI_GPT_SOVITS_IDLE_SECONDS = $IdleSeconds.ToString()
 
 try {

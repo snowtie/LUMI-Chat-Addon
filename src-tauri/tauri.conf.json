@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "LUMI to GPT",
-  "version": "1.0.9",
-  "identifier": "com.snowtie.lumitogpt",
+  "productName": "LUMI Chat Addon Helper",
+  "version": "1.1.0",
+  "identifier": "com.snowtie.lumichataddon",
   "build": {
     "frontendDist": "../ui"
   },

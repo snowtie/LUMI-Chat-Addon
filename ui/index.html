@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>LUMI to GPT</title>
+    <title>LUMI Chat Addon</title>
     <style>
       :root {
         color-scheme: light;
@@ -61,8 +61,8 @@
       <header class="brand">
         <img src="lumi-chat-addon.png" alt="LUMI Chat Addon 로고">
         <div>
-          <h1>LUMI to GPT</h1>
-          <p class="lead">공식 Codex OAuth 계정과 업데이트 상태를 확인합니다.</p>
+          <h1>LUMI Chat Addon</h1>
+          <p class="lead">ChatGPT와 Claude 계정 연결 상태를 확인합니다.</p>
         </div>
       </header>
 
@@ -108,7 +108,7 @@
 
     <script>
       const api = "http://127.0.0.1:32123";
-      const releaseApi = "https://api.github.com/repos/snowtie/LUMI-to-GPT/releases/latest";
+      const releaseApi = "https://api.github.com/repos/snowtie/LUMI-Chat-Addon/releases/latest";
       const accountStatus = document.querySelector("#account-status");
       const account = document.querySelector("#account");
       const login = document.querySelector("#login");
@@ -287,21 +287,7 @@
       openRelease.addEventListener("click", async () => {
         const invoke = window.__TAURI__?.core?.invoke;
         if (!invoke) return;
-        if (openRelease.dataset.action === "release") {
-          await invoke("open_latest_release");
-          return;
-        }
-        openRelease.disabled = true;
-        setStatus(updateStatus, "", "업데이트 준비 중");
-        updateMessage.textContent = "업데이트 창을 여는 중입니다.";
-        try {
-          await invoke("install_latest_update");
-          updateMessage.textContent = "업데이트 창에서 자동 설치를 진행합니다. 완료될 때까지 창을 닫지 마세요.";
-        } catch (error) {
-          setStatus(updateStatus, "error", "업데이트 실패");
-          updateMessage.textContent = errorText(error);
-          openRelease.disabled = false;
-        }
+        await invoke("open_latest_release");
       });
 
       window.__TAURI__?.core?.invoke("prewarm_gpt_sovits").catch(() => {});

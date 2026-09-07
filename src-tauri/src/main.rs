@@ -25,14 +25,14 @@ use uuid::Uuid;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-const APP_NAME: &str = "LUMI to GPT";
-const VERSION: &str = "1.0.9";
+const APP_NAME: &str = "LUMI Chat Addon Helper";
+const VERSION: &str = "1.1.0";
 const HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 32123;
 const DEFAULT_LUMI_APP: &str = r"D:\Steam\steamapps\common\Little LUMI\app";
 const DEFAULT_CODEX_MODEL: &str = "gpt-5.6-luna";
 const DEFAULT_CODEX_EFFORT: &str = "low";
-const LATEST_RELEASE_URL: &str = "https://github.com/snowtie/LUMI-to-GPT/releases/latest";
+const LATEST_RELEASE_URL: &str = "https://github.com/snowtie/LUMI-Chat-Addon/releases/latest";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(190);
 const MAX_BODY_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_AUDIO_BYTES: u64 = 64 * 1024 * 1024;
@@ -40,7 +40,8 @@ const MAX_IMAGE_BYTES: usize = 6 * 1024 * 1024;
 const GPT_SOVITS_BALANCED_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const GPT_SOVITS_ULTRA_SAVER_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const GPT_SOVITS_START_TIMEOUT: Duration = Duration::from_secs(120);
-const VOICE_MANAGED_KEY: &str = "lumi_to_gpt.voice.managed";
+const VOICE_MANAGED_KEY: &str = "lumi_chat_addon.voice.managed";
+const LEGACY_VOICE_MANAGED_KEY: &str = "lumi_to_gpt.voice.managed";
 const GPT_SOVITS_COMPAT_RUNNER: &str = r#"import json
 import os
 import runpy
@@ -92,7 +93,7 @@ custom["is_half"] = selected_device == "cuda"
 with runtime_config.open("w", encoding="utf-8") as output:
     yaml.safe_dump(config, output, allow_unicode=True, sort_keys=False)
 api_arguments.extend(["-c", str(runtime_config)])
-print(f"[LUMI to GPT] {selected_device.upper()} 모드로 시작합니다. ({reason})", flush=True)
+print(f"[LUMI Chat Addon] {selected_device.upper()} 모드로 시작합니다. ({reason})", flush=True)
 
 from TTS_infer_pack.TextPreprocessor import TextPreprocessor
 
@@ -203,10 +204,25 @@ impl Default for Settings {
 }
 
 fn local_data_dir() -> PathBuf {
+    if let Some(root) = env::var_os("LUMI_CHAT_ADDON_DATA_DIR").map(PathBuf::from) {
+        return root;
+    }
     let root = env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
-        .unwrap_or_else(|| env::temp_dir().join("LumiToGPT"));
-    root.join("LumiToGPT")
+        .unwrap_or_else(|| env::temp_dir().join("LumiChatAddon"));
+    root.join("LumiChatAddon")
+}
+
+fn lumi_ai_settings_path(app_dir: &Path) -> PathBuf {
+    let plugin_settings = app_dir
+        .join("plugindata")
+        .join("lumi.ai")
+        .join("ai.properties");
+    if plugin_settings.is_file() || app_dir.join("plugindata").join("lumi.ai").is_dir() {
+        plugin_settings
+    } else {
+        app_dir.join("conf").join("ai.properties")
+    }
 }
 
 fn settings_path() -> PathBuf {
@@ -334,7 +350,7 @@ fn update_properties(path: &Path, updates: &[(&str, &str)]) -> AppResult<()> {
         return Ok(());
     }
     if path.is_file() {
-        let backup = path.with_extension("properties.lumi-to-gpt.bak");
+        let backup = path.with_extension("properties.lumi-chat-addon.bak");
         if !backup.exists() {
             fs::copy(path, backup)?;
         }
@@ -361,7 +377,7 @@ fn configure_lumi_chat(settings: &Settings) -> AppResult<PathBuf> {
                 .into(),
         );
     }
-    let ai_settings = app_dir.join("conf").join("ai.properties");
+    let ai_settings = lumi_ai_settings_path(&app_dir);
     let base_url = format!("http://{HOST}:{}/v1", settings.port);
     let has_gpt_web_key = fs::read_to_string(&ai_settings).is_ok_and(|properties| {
         properties.lines().any(|line| {
@@ -371,15 +387,17 @@ fn configure_lumi_chat(settings: &Settings) -> AppResult<PathBuf> {
         })
     });
     let mut updates = vec![
-        ("llm.provider".to_owned(), "gpt_web".to_owned()),
         ("llm.base.gpt_web".to_owned(), base_url),
         (
             "llm.model.gpt_web".to_owned(),
             DEFAULT_CODEX_MODEL.to_owned(),
         ),
     ];
+    if property_value(&ai_settings, "llm.provider").is_none() {
+        updates.push(("llm.provider".to_owned(), "gpt_web".to_owned()));
+    }
     if !has_gpt_web_key {
-        updates.push(("llm.key.gpt_web".to_owned(), "lumi-to-gpt".to_owned()));
+        updates.push(("llm.key.gpt_web".to_owned(), "account".to_owned()));
     }
     for key in ["chatter.enabled", "screenwatch.enabled"] {
         if property_value(&ai_settings, key).is_none() {
@@ -462,7 +480,7 @@ fn migrate_legacy_voice_settings(settings: &mut Settings) -> AppResult<bool> {
     if settings.lumi_tts_restore_enabled.is_none() {
         return Ok(false);
     }
-    let ai_settings = lumi_app_dir(settings).join("conf").join("ai.properties");
+    let ai_settings = lumi_ai_settings_path(&lumi_app_dir(settings));
     let enabled = if settings.voice.enabled {
         "true"
     } else {
@@ -521,7 +539,7 @@ fn property_bool(path: &Path, key: &str) -> bool {
 }
 
 fn gpt_sovits_settings_from_lumi(settings: &Settings) -> GptSovitsSettings {
-    let ai_settings = lumi_app_dir(settings).join("conf").join("ai.properties");
+    let ai_settings = lumi_ai_settings_path(&lumi_app_dir(settings));
     let mut voice = settings.voice.clone();
     voice.enabled = property_bool(&ai_settings, "tts.enabled")
         && property_value(&ai_settings, "tts.provider").as_deref() == Some("gpt_sovits");
@@ -630,7 +648,7 @@ fn configure_gpt_sovits(
 }
 
 fn restore_voice_settings_to_lumi(settings: &Settings, voice: &GptSovitsSettings) -> AppResult<()> {
-    let ai_settings = lumi_app_dir(settings).join("conf").join("ai.properties");
+    let ai_settings = lumi_ai_settings_path(&lumi_app_dir(settings));
     let power_mode = match voice.power_mode {
         VoicePowerMode::Balanced => "balanced",
         VoicePowerMode::UltraSaver => "ultra_saver",
@@ -698,8 +716,9 @@ fn synchronize_voice_settings(settings: &mut Settings) -> AppResult<bool> {
     if !is_lumi_app_dir(&app_dir) {
         return Ok(false);
     }
-    let ai_settings = app_dir.join("conf").join("ai.properties");
-    let managed = property_bool(&ai_settings, VOICE_MANAGED_KEY);
+    let ai_settings = lumi_ai_settings_path(&app_dir);
+    let managed = property_bool(&ai_settings, VOICE_MANAGED_KEY)
+        || property_bool(&ai_settings, LEGACY_VOICE_MANAGED_KEY);
     let native_voice = gpt_sovits_settings_from_lumi(settings);
     let local_complete = voice_configuration_complete(&settings.voice);
     let native_complete = voice_configuration_complete(&native_voice);
@@ -732,7 +751,7 @@ fn persist_voice_settings(settings: &Settings, voice: &GptSovitsSettings) -> App
         persistent.voice = voice.clone();
         write_settings_unlocked(&persistent)?;
     }
-    let ai_settings = lumi_app_dir(settings).join("conf").join("ai.properties");
+    let ai_settings = lumi_ai_settings_path(&lumi_app_dir(settings));
     update_properties(&ai_settings, &[(VOICE_MANAGED_KEY, "true")])
 }
 
@@ -896,7 +915,7 @@ fn write_tts_diagnostic_at(
     let diagnostic = json!({
         "timestamp_unix": SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |value| value.as_secs()),
         "level": "error",
-        "service": "lumi-to-gpt",
+        "service": "lumi-chat-addon",
         "operation": operation,
         "error": error,
         "base_url": voice.base_url,
@@ -1590,7 +1609,7 @@ impl CodexAppServer {
 
         let mut child = command.spawn().map_err(|error| {
             format!(
-                "Codex App Server를 실행하지 못했습니다: {} ({error}). 설치기를 다시 실행해 주세요.",
+                "Codex App Server를 실행하지 못했습니다: {} ({error}). LUMI Chat Addon 설정에서 계정 연결을 다시 눌러 주세요.",
                 executable.display()
             )
         })?;
@@ -1624,7 +1643,7 @@ impl CodexAppServer {
             "initialize",
             json!({
                 "clientInfo": {
-                    "name": "lumi_to_gpt",
+                    "name": "lumi_chat_addon",
                     "title": APP_NAME,
                     "version": VERSION
                 }
@@ -1678,7 +1697,7 @@ impl CodexAppServer {
             if message.get("method").is_some() && message.get("id").is_some() {
                 self.send(json!({
                     "id": message["id"].clone(),
-                    "error": {"code":-32601,"message":"LUMI to GPT에서 지원하지 않는 요청입니다."}
+                    "error": {"code":-32601,"message":"LUMI Chat Addon에서 지원하지 않는 요청입니다."}
                 }))?;
                 continue;
             }
@@ -1729,7 +1748,7 @@ impl CodexAppServer {
         let account = self.account()?;
         if account["account"]["type"].as_str() != Some("chatgpt") {
             return Err(
-                "ChatGPT 계정 연결이 필요합니다. LUMI to GPT 창에서 계정을 연결해 주세요.".into(),
+                "ChatGPT 계정 연결이 필요합니다. LUMI Chat Addon 설정에서 연결해 주세요.".into(),
             );
         }
 
@@ -1748,7 +1767,7 @@ impl CodexAppServer {
                 "sandbox": "read-only",
                 "personality": "none",
                 "ephemeral": true,
-                "serviceName": "lumi_to_gpt",
+                "serviceName": "lumi_chat_addon",
                 "developerInstructions": "You are the conversation backend for the LUMI desktop mascot. Follow the character and conversation instructions inside the user's message. Return only the final Korean dialogue text for one speech bubble. Do not use tools, inspect files, run commands, browse, or explain your process."
             }),
             Duration::from_secs(30),
@@ -1919,6 +1938,208 @@ impl CodexState {
     fn running(&self) -> bool {
         self.client.lock().is_ok_and(|client| client.is_some())
     }
+}
+
+fn claude_command() -> PathBuf {
+    if let Some(path) = env::var_os("LUMI_CLAUDE_CLI").map(PathBuf::from) {
+        return path;
+    }
+    if let Some(profile) = env::var_os("USERPROFILE").map(PathBuf::from) {
+        let installed = profile.join(".local").join("bin").join("claude.exe");
+        if installed.is_file() {
+            return installed;
+        }
+    }
+    PathBuf::from("claude")
+}
+
+fn claude_account_status() -> AppResult<Value> {
+    let executable = claude_command();
+    let output = Command::new(&executable)
+        .args(["auth", "status"])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| {
+            format!(
+                "Claude Code를 찾지 못했습니다. 계정 연결 버튼에서 공식 Claude Code를 설치해 주세요: {error}"
+            )
+        })?;
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let parsed = serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({}));
+    let connected = output.status.success()
+        && parsed
+            .get("loggedIn")
+            .and_then(Value::as_bool)
+            .or_else(|| parsed.get("authenticated").and_then(Value::as_bool))
+            .unwrap_or(false);
+    Ok(json!({
+        "connected": connected,
+        "installed": true,
+        "account": parsed,
+        "backend": "claude_code_cli"
+    }))
+}
+
+fn start_claude_login() -> AppResult<Value> {
+    let executable = claude_command();
+    let mut command = if executable.is_file() {
+        let mut command = Command::new(executable);
+        command.args(["auth", "login"]);
+        command
+    } else {
+        let mut command = Command::new("powershell.exe");
+        command.args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "& { irm https://claude.ai/install.ps1 | iex; $claude = Join-Path $env:USERPROFILE '.local\\bin\\claude.exe'; & $claude auth login }",
+        ]);
+        command
+    };
+    #[cfg(windows)]
+    command.creation_flags(0x00000010);
+    command
+        .spawn()
+        .map_err(|error| format!("Claude Code 설치 및 로그인 창을 열지 못했습니다: {error}"))?;
+    Ok(json!({"ok":true,"message":"Claude Code 로그인 창을 열었습니다."}))
+}
+
+fn logout_claude() -> AppResult<Value> {
+    let output = Command::new(claude_command())
+        .args(["auth", "logout"])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| format!("Claude Code 로그아웃을 실행하지 못했습니다: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr)
+            .trim()
+            .to_owned()
+            .into());
+    }
+    Ok(json!({"ok":true}))
+}
+
+fn read_limited(mut reader: impl Read, limit: usize) -> Vec<u8> {
+    let mut data = Vec::new();
+    let _ = reader
+        .by_ref()
+        .take(limit as u64 + 1)
+        .read_to_end(&mut data);
+    if data.len() > limit {
+        data.truncate(limit);
+    }
+    data
+}
+
+fn claude_complete(model: &str, mut prompt: String, images: Vec<String>) -> AppResult<String> {
+    claude_account_status().and_then(|status| {
+        if status["connected"].as_bool() == Some(true) {
+            Ok(())
+        } else {
+            Err("Claude 계정 연결이 필요합니다. LUMI Chat Addon 설정에서 연결해 주세요.".into())
+        }
+    })?;
+    let model = match model.trim() {
+        "" | "claude-account" => "sonnet",
+        configured
+            if configured.len() <= 128
+                && configured
+                    .bytes()
+                    .all(|value| value.is_ascii_alphanumeric() || b"._:-".contains(&value)) =>
+        {
+            configured
+        }
+        _ => return Err("Claude 모델 이름이 올바르지 않습니다.".into()),
+    };
+    let workspace = local_data_dir().join("claude-workspace");
+    let image_files = TemporaryCodexImages::create(&workspace, images)?;
+    if !image_files.paths.is_empty() {
+        let paths = image_files
+            .paths
+            .iter()
+            .map(|path| path.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("\n");
+        prompt.push_str("\n\n[첨부 화면 이미지]\n");
+        prompt.push_str(&paths);
+        prompt.push_str("\nRead 도구로 위 이미지만 확인한 뒤 답하세요.");
+    }
+
+    fs::create_dir_all(&workspace)?;
+    let mut command = Command::new(claude_command());
+    command
+        .args([
+            "-p",
+            "--output-format",
+            "json",
+            "--model",
+            model,
+            "--tools",
+            if image_files.paths.is_empty() {
+                ""
+            } else {
+                "Read"
+            },
+            "--no-session-persistence",
+        ])
+        .current_dir(&workspace)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Claude Code를 실행하지 못했습니다: {error}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or("Claude Code 입력을 열지 못했습니다.")?
+        .write_all(prompt.as_bytes())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("Claude Code 출력을 열지 못했습니다.")?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("Claude Code 오류 출력을 열지 못했습니다.")?;
+    let stdout_reader = thread::spawn(move || read_limited(stdout, 4 * 1024 * 1024));
+    let stderr_reader = thread::spawn(move || read_limited(stderr, 512 * 1024));
+    let deadline = Instant::now() + REQUEST_TIMEOUT;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Claude 응답 시간이 초과되었습니다.".into());
+        }
+        thread::sleep(Duration::from_millis(100));
+    };
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let stderr = stderr_reader.join().unwrap_or_default();
+    if !status.success() {
+        let message = String::from_utf8_lossy(&stderr).trim().to_owned();
+        return Err(if message.is_empty() {
+            format!("Claude Code가 종료 코드 {status}로 끝났습니다.").into()
+        } else {
+            format!("Claude Code 오류: {message}").into()
+        });
+    }
+    let payload: Value = serde_json::from_slice(&stdout)
+        .map_err(|error| format!("Claude Code JSON 응답을 읽지 못했습니다: {error}"))?;
+    let text = payload
+        .get("result")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    if text.is_empty() {
+        return Err("Claude 응답이 비어 있습니다.".into());
+    }
+    Ok(text.to_owned())
 }
 
 fn content_to_text_and_images(content: &Value) -> (String, Vec<String>) {
@@ -2138,6 +2359,7 @@ fn handle_request(mut request: Request, context: HttpContext) {
                 "lumi_chat_found": is_lumi_chat_unlocked(&lumi_app_dir(&context.settings)),
                 "lumi_app_dir": lumi_app_dir(&context.settings),
                 "codex_process_started": context.state.running(),
+                "claude_installed": claude_command().is_file(),
                 "model": DEFAULT_CODEX_MODEL,
                 "pending_voice": 0
             }),
@@ -2148,6 +2370,17 @@ fn handle_request(mut request: Request, context: HttpContext) {
         match context.state.account_status() {
             Ok(status) => respond_json(request, 200, status),
             Err(error) => respond_json(request, 502, json!({"error":error.to_string()})),
+        }
+        return;
+    }
+    if request.method() == &Method::Get && path == "/claude/auth/status" {
+        match claude_account_status() {
+            Ok(status) => respond_json(request, 200, status),
+            Err(error) => respond_json(
+                request,
+                200,
+                json!({"connected":false,"installed":false,"error":error.to_string()}),
+            ),
         }
         return;
     }
@@ -2187,6 +2420,14 @@ fn handle_request(mut request: Request, context: HttpContext) {
             Ok(result) => respond_json(request, 200, result),
             Err(error) => respond_json(request, 502, json!({"error":error.to_string()})),
         },
+        "/claude/auth/login" => match start_claude_login() {
+            Ok(result) => respond_json(request, 200, result),
+            Err(error) => respond_json(request, 502, json!({"error":error.to_string()})),
+        },
+        "/claude/auth/logout" => match logout_claude() {
+            Ok(result) => respond_json(request, 200, result),
+            Err(error) => respond_json(request, 502, json!({"error":error.to_string()})),
+        },
         "/v1/chat/completions" => {
             let (prompt, images) = match build_codex_prompt(&payload["messages"]) {
                 Ok(value) => value,
@@ -2223,6 +2464,42 @@ fn handle_request(mut request: Request, context: HttpContext) {
                         json!({"error":{"message":error.to_string(),"type":"codex_app_server_error"}}),
                     );
                 }
+            }
+        }
+        "/claude/v1/chat/completions" => {
+            let (prompt, images) = match build_codex_prompt(&payload["messages"]) {
+                Ok(value) => value,
+                Err(error) => {
+                    respond_json(request, 400, json!({"error":{"message":error.to_string()}}));
+                    return;
+                }
+            };
+            let model = payload
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or("sonnet")
+                .to_owned();
+            match claude_complete(&model, prompt, images) {
+                Ok(text) => {
+                    let id = Uuid::new_v4().simple().to_string();
+                    respond_json(
+                        request,
+                        200,
+                        json!({
+                            "id":format!("chatcmpl-{id}"),
+                            "object":"chat.completion",
+                            "created":SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |value| value.as_secs()),
+                            "model":model,
+                            "choices":[{"index":0,"message":{"role":"assistant","content":text},"finish_reason":"stop"}],
+                            "usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}
+                        }),
+                    );
+                }
+                Err(error) => respond_json(
+                    request,
+                    502,
+                    json!({"error":{"message":error.to_string(),"type":"claude_code_cli_error"}}),
+                ),
             }
         }
         "/voice/synthesize" => {
@@ -2496,54 +2773,6 @@ fn open_latest_release() -> Result<(), String> {
         .map_err(|error| format!("업데이트 페이지를 열지 못했습니다: {error}"))
 }
 
-fn embedded_updater() -> Vec<u8> {
-    let mut script = vec![0xEF, 0xBB, 0xBF];
-    script.extend_from_slice(include_bytes!("../../update.ps1"));
-    script
-}
-
-fn update_target_root(current_exe: &Path, data_root: &Path) -> PathBuf {
-    let installed_name = current_exe
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("lumi-to-gpt.exe"));
-    if installed_name {
-        current_exe.parent().unwrap_or(data_root).to_path_buf()
-    } else {
-        data_root.join("app")
-    }
-}
-
-#[tauri::command]
-fn install_latest_update(app: tauri::AppHandle) -> Result<(), String> {
-    let update_root = local_data_dir().join("update");
-    fs::create_dir_all(&update_root)
-        .map_err(|error| format!("업데이트 폴더를 만들지 못했습니다: {error}"))?;
-    let script_path = update_root.join("update.ps1");
-    fs::write(&script_path, embedded_updater())
-        .map_err(|error| format!("업데이트 설치기를 준비하지 못했습니다: {error}"))?;
-    let current_exe = env::current_exe()
-        .map_err(|error| format!("현재 설치 경로를 확인하지 못했습니다: {error}"))?;
-    let target_root = update_target_root(&current_exe, &local_data_dir());
-
-    let mut command = Command::new("powershell.exe");
-    command
-        .arg("-NoProfile")
-        .arg("-ExecutionPolicy")
-        .arg("Bypass")
-        .arg("-File")
-        .arg(&script_path)
-        .arg("-TargetRoot")
-        .arg(target_root);
-    #[cfg(windows)]
-    command.creation_flags(0x00000010);
-    command
-        .spawn()
-        .map_err(|error| format!("업데이트 창을 열지 못했습니다: {error}"))?;
-    app.exit(0);
-    Ok(())
-}
-
 fn show_window(app: &tauri::AppHandle, label: &str) -> Result<(), String> {
     let window = app
         .get_webview_window(label)
@@ -2562,12 +2791,11 @@ fn run_gui(server: RunningServer, settings: Settings) -> AppResult<()> {
         .invoke_handler(tauri::generate_handler![
             prewarm_gpt_sovits,
             open_codex_login_url,
-            open_latest_release,
-            install_latest_update
+            open_latest_release
         ])
         .setup(move |app| {
             WebviewWindowBuilder::new(app, "account", WebviewUrl::App("index.html".into()))
-                .title("LUMI to GPT")
+                .title("LUMI Chat Addon")
                 .inner_size(600.0, 740.0)
                 .min_inner_size(500.0, 620.0)
                 .build()?;
@@ -2577,9 +2805,9 @@ fn run_gui(server: RunningServer, settings: Settings) -> AppResult<()> {
             let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&account, &quit])?;
             let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.ico"))?;
-            TrayIconBuilder::with_id("lumi-to-gpt")
+            TrayIconBuilder::with_id("lumi-chat-addon")
                 .icon(icon)
-                .tooltip("LUMI to GPT")
+                .tooltip("LUMI Chat Addon")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -2683,7 +2911,13 @@ fn real_main() -> AppResult<()> {
     }
     let server = start_http_server(settings.clone())?;
     if arguments.iter().any(|value| value == "--headless") {
+        let shared_settings = Arc::new(Mutex::new(settings));
+        let voice_monitor_stop = Arc::new(AtomicBool::new(false));
+        let voice_monitor =
+            start_gpt_sovits_lifetime_monitor(shared_settings, voice_monitor_stop.clone());
         let _ = server.thread.join();
+        voice_monitor_stop.store(true, Ordering::SeqCst);
+        let _ = voice_monitor.join();
         return Ok(());
     }
     run_gui(server, settings)
@@ -2716,15 +2950,6 @@ mod tests {
     }
 
     #[test]
-    fn embedded_updater_has_utf8_bom_and_verified_release_flow() {
-        let script = embedded_updater();
-        assert!(script.starts_with(&[0xEF, 0xBB, 0xBF]));
-        let text = String::from_utf8(script[3..].to_vec()).unwrap();
-        assert!(text.contains("SHA256SUMS.txt"));
-        assert!(text.contains("if ($SkipShortcut)"));
-    }
-
-    #[test]
     fn gpt_sovits_runner_selects_cuda_or_cpu_without_changing_vendor_config() {
         assert!(GPT_SOVITS_COMPAT_RUNNER.contains("torch.cuda.is_available()"));
         assert!(GPT_SOVITS_COMPAT_RUNNER.contains("torch.cuda.synchronize()"));
@@ -2743,22 +2968,6 @@ mod tests {
     }
 
     #[test]
-    fn release_update_targets_the_installed_app_folder() {
-        let data_root = Path::new(r"C:\Users\tester\AppData\Local\LumiToGPT");
-        assert_eq!(
-            update_target_root(
-                Path::new(r"C:\Users\tester\Downloads\LUMI to GPT.exe"),
-                data_root
-            ),
-            data_root.join("app")
-        );
-        assert_eq!(
-            update_target_root(Path::new(r"E:\Portable\lumi-to-gpt.exe"), data_root),
-            PathBuf::from(r"E:\Portable")
-        );
-    }
-
-    #[test]
     fn release_executable_finds_installed_codex_app_server() {
         let root = env::temp_dir().join(format!(
             "lumi-installed-codex-test-{}",
@@ -2768,7 +2977,10 @@ mod tests {
         fs::create_dir_all(installed.parent().unwrap()).unwrap();
         fs::write(&installed, b"test").unwrap();
 
-        let found = find_codex_app_server(Some(Path::new(r"D:\Downloads\LUMI to GPT.exe")), &root);
+        let found = find_codex_app_server(
+            Some(Path::new(r"D:\Downloads\lumi-chat-addon-helper.exe")),
+            &root,
+        );
 
         assert_eq!(found.as_deref(), Some(installed.as_path()));
         fs::remove_dir_all(root).unwrap();
@@ -2833,16 +3045,17 @@ mod tests {
 
         let updated = fs::read_to_string(&ai_settings).unwrap();
         assert!(updated.contains("tts.enabled=true"));
-        assert!(updated.contains("llm.provider=gpt_web"));
+        assert!(updated.contains("llm.provider=ollama"));
         assert!(updated.contains("llm.base.gpt_web=http://127.0.0.1:34567/v1"));
         assert!(updated.contains("llm.key.openai=old-secret"));
-        assert!(updated.contains("llm.key.gpt_web=lumi-to-gpt"));
+        assert!(updated.contains("llm.key.gpt_web=account"));
         assert!(updated.contains("llm.model.gpt_web=gpt-5.6-luna"));
         assert!(updated.contains("chatter.enabled=false"));
         assert!(updated.contains("screenwatch.enabled=false"));
         assert!(updated.contains("tts.gpt_sovits.device_mode=auto"));
         assert_eq!(
-            fs::read_to_string(ai_settings.with_extension("properties.lumi-to-gpt.bak")).unwrap(),
+            fs::read_to_string(ai_settings.with_extension("properties.lumi-chat-addon.bak"))
+                .unwrap(),
             original
         );
         fs::remove_dir_all(root).unwrap();
@@ -3076,7 +3289,7 @@ mod tests {
     }
 
     #[test]
-    fn portable_installer_voice_configuration_validates_local_files() {
+    fn voice_configuration_validates_local_files() {
         let root = env::temp_dir().join(format!(
             "gpt-sovits-installer-test-{}",
             Uuid::new_v4().simple()
