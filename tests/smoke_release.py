@@ -160,21 +160,46 @@ def test_legacy_uninstaller() -> None:
             json.dumps({"lumi_app_dir": str(app), "voice": {"runtime_dir": str(legacy / "gpt-sovits")}}),
             encoding="utf-8",
         )
+        (addon / "settings.json").write_text(
+            json.dumps({"port": 32123, "voice": {"runtime_dir": str(legacy / "gpt-sovits")}}),
+            encoding="utf-8",
+        )
         (desktop / "LUMI to GPT.lnk").write_bytes(b"shortcut")
+        plugin_settings = app / "plugindata" / "lumi.ai" / "ai.properties"
+        plugin_settings.parent.mkdir(parents=True)
+        plugin_settings.write_text(
+            "tts.gpt_sovits.runtime=" + str(legacy / "gpt-sovits").replace("\\", r"\\").replace(":", r"\:") + "\n",
+            encoding="utf-8",
+        )
+        sleeper = legacy / "app" / "lumi-legacy-worker.exe"
+        shutil.copy2(Path(os.environ["WINDIR"]) / "System32" / "ping.exe", sleeper)
+        locked_process = subprocess.Popen(
+            [str(sleeper), "127.0.0.1", "-t"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(0.2)
+        check(locked_process.poll() is None, "legacy child process did not start")
         environment = os.environ.copy()
         environment["LOCALAPPDATA"] = str(local)
-        result = subprocess.run(
-            [
-                "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                str(PROJECT / "uninstall.ps1"), "-LumiAppPath", str(app),
-                "-DesktopPath", str(desktop), "-SkipProcessCheck",
-            ],
-            input="\\n",
-            text=True,
-            capture_output=True,
-            encoding="utf-8",
-            env=environment,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                    str(PROJECT / "uninstall.ps1"), "-LumiAppPath", str(app),
+                    "-DesktopPath", str(desktop), "-SkipProcessCheck",
+                ],
+                input="\\n",
+                text=True,
+                capture_output=True,
+                encoding="utf-8",
+                env=environment,
+            )
+        finally:
+            if locked_process.poll() is None:
+                locked_process.kill()
+                locked_process.wait()
         check(result.returncode == 0, result.stdout + result.stderr)
         check(sha256(app / "Shimeji-ee.jar") == base_hash, "legacy JAR was not restored")
         check(not backup.exists(), "legacy JAR backup was not removed")
@@ -182,6 +207,12 @@ def test_legacy_uninstaller() -> None:
         check((addon / "models" / "LUMI-v2" / "voice.bin").read_bytes() == b"new-voice", "new voice model was overwritten")
         check((addon / "models" / "LUMI-v2" / "voice.bin.legacy-1").read_bytes() == b"voice", "legacy voice conflict was lost")
         check((addon / "runtime" / "codex-app-server.exe").is_file(), "Codex runtime was not migrated")
+        migrated_settings = (addon / "settings.json").read_text(encoding="utf-8")
+        check(str(legacy) not in migrated_settings, "migrated settings still reference the legacy data root")
+        native_settings = plugin_settings.read_text(encoding="utf-8")
+        check("LumiToGPT" not in native_settings and "LumiChatAddon" in native_settings,
+              "native LUMI AI settings still reference the legacy data root")
+        check(locked_process.poll() is not None, "legacy child process was not stopped")
         check(not (desktop / "LUMI to GPT.lnk").exists(), "legacy shortcut was not removed")
 
 

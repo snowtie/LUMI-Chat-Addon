@@ -94,26 +94,70 @@ function Get-Sha256([string]$Path) {
 
 function Stop-LegacyProcesses {
     $legacyPrefix = [IO.Path]::GetFullPath($LegacyRoot).TrimEnd('\') + '\'
-    $processes = @(
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+        $remaining = @(
+            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                Where-Object {
+                    if (-not $_.ExecutablePath) { return $false }
+                    try {
+                        return [IO.Path]::GetFullPath($_.ExecutablePath).StartsWith(
+                            $legacyPrefix,
+                            [StringComparison]::OrdinalIgnoreCase
+                        )
+                    }
+                    catch { return $false }
+                }
+        )
+        foreach ($process in $remaining) {
+            $running = Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue
+            if ($running) { Stop-Process -InputObject $running -Force -ErrorAction Stop }
+        }
+        if ($remaining.Count -gt 0) { Start-Sleep -Milliseconds 150 }
+    } while ($remaining.Count -gt 0 -and [DateTime]::UtcNow -lt $deadline)
+    $remaining = @(
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             Where-Object {
                 $_.ExecutablePath -and
                 [IO.Path]::GetFullPath($_.ExecutablePath).StartsWith(
                     $legacyPrefix,
                     [StringComparison]::OrdinalIgnoreCase
-                ) -and
-                ($_.Name -eq "lumi-to-gpt.exe" -or $_.Name -eq "python.exe")
+                )
             }
     )
-    foreach ($process in $processes) {
-        Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+    if ($remaining.Count -gt 0) {
+        throw "A legacy LUMI to GPT process could not be stopped: $($remaining.Name -join ', ')"
     }
+}
+
+function Rewrite-LegacyPaths([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
+    $text = [IO.File]::ReadAllText($Path)
+    $legacyProperty = $LegacyRoot.Replace('\', '\\').Replace(':', '\:')
+    $addonProperty = $AddonRoot.Replace('\', '\\').Replace(':', '\:')
+    $updated = $text.Replace($legacyProperty, $addonProperty)
+    $updated = $updated.Replace($LegacyRoot.Replace('\', '\\'), $AddonRoot.Replace('\', '\\'))
+    $updated = $updated.Replace($LegacyRoot, $AddonRoot)
+    if ($updated -ne $text) {
+        [IO.File]::WriteAllText($Path, $updated, [Text.UTF8Encoding]::new($false))
+    }
+}
+
+function Remove-DirectoryWithRetry([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return }
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     do {
-        $remaining = @($processes | Where-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue })
-        if ($remaining.Count -gt 0) { Start-Sleep -Milliseconds 100 }
-    } while ($remaining.Count -gt 0 -and [DateTime]::UtcNow -lt $deadline)
-    if ($remaining.Count -gt 0) { throw "A legacy LUMI to GPT process could not be stopped." }
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force
+            return
+        }
+        catch {
+            $lastError = $_
+            if ([DateTime]::UtcNow -ge $deadline) { break }
+            Start-Sleep -Milliseconds 250
+        }
+    } while (Test-Path -LiteralPath $Path -PathType Container)
+    throw "Could not remove the legacy data folder: $($lastError.Exception.Message)"
 }
 
 function Move-MergedDirectory([string]$Source, [string]$Destination) {
@@ -191,7 +235,7 @@ function Restore-LumiJar([string]$AppPath) {
     Write-Host "Restored the original Little LUMI JAR."
 }
 
-function Move-LegacyData {
+function Move-LegacyData([string]$AppPath) {
     if (-not (Test-Path -LiteralPath $LegacyRoot -PathType Container)) { return }
     New-Item -ItemType Directory -Force -Path $AddonRoot | Out-Null
     foreach ($name in @("gpt-sovits", "models", "downloads")) {
@@ -221,8 +265,12 @@ function Move-LegacyData {
     $settings = Join-Path $LegacyRoot "settings.json"
     $targetSettings = Join-Path $AddonRoot "settings.json"
     if ((Test-Path -LiteralPath $settings -PathType Leaf) -and -not (Test-Path -LiteralPath $targetSettings)) {
-        $text = [IO.File]::ReadAllText($settings).Replace($LegacyRoot.Replace('\', '\\'), $AddonRoot.Replace('\', '\\'))
-        [IO.File]::WriteAllText($targetSettings, $text, [Text.UTF8Encoding]::new($false))
+        Copy-Item -LiteralPath $settings -Destination $targetSettings
+    }
+    Rewrite-LegacyPaths $targetSettings
+    if ($AppPath) {
+        Rewrite-LegacyPaths (Join-Path $AppPath "plugindata\lumi.ai\ai.properties")
+        Rewrite-LegacyPaths (Join-Path $AppPath "conf\ai.properties")
     }
 }
 
@@ -232,12 +280,11 @@ try {
     $TranscriptStarted = $true
     Write-Host "LUMI to GPT legacy uninstaller"
     Stop-LegacyProcesses
-    Restore-LumiJar (Find-LumiApp)
+    $resolvedLumiApp = Find-LumiApp
+    Restore-LumiJar $resolvedLumiApp
     if (-not $KeepLegacyData) {
-        Move-LegacyData
-        if (Test-Path -LiteralPath $LegacyRoot -PathType Container) {
-            Remove-Item -LiteralPath $LegacyRoot -Recurse -Force
-        }
+        Move-LegacyData $resolvedLumiApp
+        Remove-DirectoryWithRetry $LegacyRoot
         $shortcut = Join-Path $DesktopPath "LUMI to GPT.lnk"
         if (Test-Path -LiteralPath $shortcut -PathType Leaf) { Remove-Item -LiteralPath $shortcut -Force }
     }
