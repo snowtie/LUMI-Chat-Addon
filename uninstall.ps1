@@ -93,16 +93,55 @@ function Get-Sha256([string]$Path) {
 }
 
 function Stop-LegacyProcesses {
-    $expected = [IO.Path]::GetFullPath((Join-Path $LegacyRoot "app\lumi-to-gpt.exe"))
+    $legacyPrefix = [IO.Path]::GetFullPath($LegacyRoot).TrimEnd('\') + '\'
     $processes = @(
-        Get-CimInstance Win32_Process -Filter "Name = 'lumi-to-gpt.exe'" -ErrorAction SilentlyContinue |
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             Where-Object {
                 $_.ExecutablePath -and
-                [String]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), $expected, [StringComparison]::OrdinalIgnoreCase)
+                [IO.Path]::GetFullPath($_.ExecutablePath).StartsWith(
+                    $legacyPrefix,
+                    [StringComparison]::OrdinalIgnoreCase
+                ) -and
+                ($_.Name -eq "lumi-to-gpt.exe" -or $_.Name -eq "python.exe")
             }
     )
     foreach ($process in $processes) {
         Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+        $remaining = @($processes | Where-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue })
+        if ($remaining.Count -gt 0) { Start-Sleep -Milliseconds 100 }
+    } while ($remaining.Count -gt 0 -and [DateTime]::UtcNow -lt $deadline)
+    if ($remaining.Count -gt 0) { throw "A legacy LUMI to GPT process could not be stopped." }
+}
+
+function Move-MergedDirectory([string]$Source, [string]$Destination) {
+    if (-not (Test-Path -LiteralPath $Source -PathType Container)) { return }
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    foreach ($item in @(Get-ChildItem -LiteralPath $Source -Force)) {
+        $target = Join-Path $Destination $item.Name
+        if ($item.PSIsContainer) {
+            Move-MergedDirectory $item.FullName $target
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
+            Move-Item -LiteralPath $item.FullName -Destination $target
+            continue
+        }
+        if ((Get-Sha256 $item.FullName) -eq (Get-Sha256 $target)) {
+            Remove-Item -LiteralPath $item.FullName -Force
+            continue
+        }
+        $suffix = 1
+        do {
+            $conflict = "$target.legacy-$suffix"
+            $suffix++
+        } while (Test-Path -LiteralPath $conflict)
+        Move-Item -LiteralPath $item.FullName -Destination $conflict
+    }
+    if (@(Get-ChildItem -LiteralPath $Source -Force).Count -eq 0) {
+        Remove-Item -LiteralPath $Source -Force
     }
 }
 
@@ -155,11 +194,22 @@ function Restore-LumiJar([string]$AppPath) {
 function Move-LegacyData {
     if (-not (Test-Path -LiteralPath $LegacyRoot -PathType Container)) { return }
     New-Item -ItemType Directory -Force -Path $AddonRoot | Out-Null
-    foreach ($name in @("gpt-sovits", "models", "downloads", "gpt-sovits-runtime-selection.json")) {
+    foreach ($name in @("gpt-sovits", "models", "downloads")) {
         $source = Join-Path $LegacyRoot $name
         $target = Join-Path $AddonRoot $name
-        if ((Test-Path -LiteralPath $source) -and -not (Test-Path -LiteralPath $target)) {
-            Move-Item -LiteralPath $source -Destination $target
+        Move-MergedDirectory $source $target
+    }
+    $selection = Join-Path $LegacyRoot "gpt-sovits-runtime-selection.json"
+    $targetSelection = Join-Path $AddonRoot "gpt-sovits-runtime-selection.json"
+    if ((Test-Path -LiteralPath $selection -PathType Leaf) -and -not (Test-Path -LiteralPath $targetSelection)) {
+        Move-Item -LiteralPath $selection -Destination $targetSelection
+    }
+    elseif (Test-Path -LiteralPath $selection -PathType Leaf) {
+        if ((Get-Sha256 $selection) -eq (Get-Sha256 $targetSelection)) {
+            Remove-Item -LiteralPath $selection -Force
+        }
+        else {
+            Move-Item -LiteralPath $selection -Destination (Join-Path $AddonRoot "gpt-sovits-runtime-selection.legacy.json") -Force
         }
     }
     $codex = Join-Path $LegacyRoot "app\codex-app-server.exe"

@@ -139,6 +139,9 @@ def test_legacy_uninstaller() -> None:
         desktop = root / "Desktop"
         (legacy / "app").mkdir(parents=True)
         (legacy / "models" / "LUMI-v2").mkdir(parents=True)
+        addon = local / "LumiChatAddon"
+        (addon / "models" / "LUMI-v2").mkdir(parents=True)
+        (addon / "models" / "LUMI-v2" / "voice.bin").write_bytes(b"new-voice")
         (app / "speech").mkdir(parents=True)
         desktop.mkdir()
         backup = app / "Shimeji-ee.jar.lumi-to-gpt.bak"
@@ -176,8 +179,8 @@ def test_legacy_uninstaller() -> None:
         check(sha256(app / "Shimeji-ee.jar") == base_hash, "legacy JAR was not restored")
         check(not backup.exists(), "legacy JAR backup was not removed")
         check(not legacy.exists(), "legacy application data was not removed")
-        addon = local / "LumiChatAddon"
-        check((addon / "models" / "LUMI-v2" / "voice.bin").is_file(), "voice model was not migrated")
+        check((addon / "models" / "LUMI-v2" / "voice.bin").read_bytes() == b"new-voice", "new voice model was overwritten")
+        check((addon / "models" / "LUMI-v2" / "voice.bin.legacy-1").read_bytes() == b"voice", "legacy voice conflict was lost")
         check((addon / "runtime" / "codex-app-server.exe").is_file(), "Codex runtime was not migrated")
         check(not (desktop / "LUMI to GPT.lnk").exists(), "legacy shortcut was not removed")
 
