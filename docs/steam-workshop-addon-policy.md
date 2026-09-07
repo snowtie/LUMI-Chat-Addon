@@ -8,7 +8,10 @@ LUMI Chat Addon 1.1.0은 Little LUMI 1.2.0의 공식 코드 플러그인 규격�
 
 ```text
 workshop-content/
+├─ LICENSE
+├─ NOTICE.txt
 ├─ README.txt
+├─ VOICE_MODEL_NOTICE.txt
 └─ plugins/
    └─ lumi.chat.addon.jar
 ```

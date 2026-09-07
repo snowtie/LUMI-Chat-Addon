@@ -104,6 +104,7 @@ def test_artifacts() -> None:
     with zipfile.ZipFile(WORKSHOP_ZIP) as package:
         names = {name.replace("\\", "/") for name in package.namelist()}
         check("plugins/lumi.chat.addon.jar" in names, "Workshop package has no plugin JAR")
+        check({"LICENSE", "NOTICE.txt", "VOICE_MODEL_NOTICE.txt"} <= names, "Workshop notices are missing")
         check(not any(name.lower().endswith(".exe") for name in names), "Workshop package must not contain EXEs")
         check(not any("install.ps1" in name.lower() for name in names), "Workshop package contains an installer")
 

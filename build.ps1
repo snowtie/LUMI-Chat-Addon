@@ -44,6 +44,9 @@ if ($LASTEXITCODE -ne 0) { throw "Plugin build failed." }
 
 $workshopRoot = Join-Path $ReleaseRoot "workshop-content"
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "workshop\README.txt") -Destination $workshopRoot
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "LICENSE") -Destination $workshopRoot
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "NOTICE.txt") -Destination $workshopRoot
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "VOICE_MODEL_NOTICE.txt") -Destination $workshopRoot
 $pluginJar = Join-Path $workshopRoot "plugins\lumi.chat.addon.jar"
 if (-not (Test-Path -LiteralPath $pluginJar -PathType Leaf)) { throw "Plugin JAR was not built." }
 
