@@ -1,4 +1,7 @@
-param([string]$SdkJar)
+param(
+    [string]$SdkJar,
+    [string]$LumiChatJar
+)
 
 $ErrorActionPreference = "Stop"
 if (Test-Path -LiteralPath variable:PSNativeCommandUseErrorActionPreference) {
@@ -8,7 +11,7 @@ if (Test-Path -LiteralPath variable:PSNativeCommandUseErrorActionPreference) {
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TauriRoot = Join-Path $ProjectRoot "src-tauri"
 $ReleaseRoot = Join-Path $ProjectRoot "release"
-$Version = "1.1.0"
+$Version = "1.1.1"
 $HelperAsset = "lumi-chat-addon-helper-v$Version-windows-x64.exe"
 $WorkshopArchive = "LUMI-Chat-Addon-v$Version-workshop.zip"
 $UninstallerArchive = "LUMI-to-GPT-Legacy-Uninstaller-v$Version.zip"
@@ -39,7 +42,10 @@ if (-not (Test-Path -LiteralPath $builtHelper -PathType Leaf)) {
 $helperPath = Join-Path $ReleaseRoot $HelperAsset
 Copy-Item -LiteralPath $builtHelper -Destination $helperPath
 
-& (Join-Path $ProjectRoot "plugin\build.ps1") -SdkJar $SdkJar -OutputRoot (Join-Path $ReleaseRoot "workshop-content")
+& (Join-Path $ProjectRoot "plugin\build.ps1") `
+    -SdkJar $SdkJar `
+    -LumiChatJar $LumiChatJar `
+    -OutputRoot (Join-Path $ReleaseRoot "workshop-content")
 if ($LASTEXITCODE -ne 0) { throw "Plugin build failed." }
 
 $workshopRoot = Join-Path $ReleaseRoot "workshop-content"
@@ -49,6 +55,27 @@ Copy-Item -LiteralPath (Join-Path $ProjectRoot "NOTICE.txt") -Destination $works
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "VOICE_MODEL_NOTICE.txt") -Destination $workshopRoot
 $pluginJar = Join-Path $workshopRoot "plugins\lumi.chat.addon.jar"
 if (-not (Test-Path -LiteralPath $pluginJar -PathType Leaf)) { throw "Plugin JAR was not built." }
+
+$previewPath = Join-Path $ReleaseRoot "workshop-preview.png"
+$workshopPreviewPath = Join-Path $workshopRoot "workshop-preview.png"
+$logoPath = Join-Path $ProjectRoot "ui\lumi-chat-addon.png"
+Add-Type -AssemblyName System.Drawing
+$sourceImage = [Drawing.Image]::FromFile($logoPath)
+$bitmap = [Drawing.Bitmap]::new(512, 512)
+$graphics = [Drawing.Graphics]::FromImage($bitmap)
+try {
+    $graphics.CompositingQuality = [Drawing.Drawing2D.CompositingQuality]::HighQuality
+    $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $graphics.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $graphics.DrawImage($sourceImage, 0, 0, 512, 512)
+    $bitmap.Save($previewPath, [Drawing.Imaging.ImageFormat]::Png)
+    $bitmap.Save($workshopPreviewPath, [Drawing.Imaging.ImageFormat]::Png)
+}
+finally {
+    $graphics.Dispose()
+    $bitmap.Dispose()
+    $sourceImage.Dispose()
+}
 
 $workshopZip = Join-Path $ReleaseRoot $WorkshopArchive
 Compress-Archive -Path (Join-Path $workshopRoot "*") -DestinationPath $workshopZip -CompressionLevel Optimal
@@ -67,25 +94,6 @@ Copy-Item -LiteralPath (Join-Path $ProjectRoot "RELEASE_NOTES.md") -Destination 
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "LICENSE") -Destination $ReleaseRoot
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "NOTICE.txt") -Destination $ReleaseRoot
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "VOICE_MODEL_NOTICE.txt") -Destination $ReleaseRoot
-
-Add-Type -AssemblyName System.Drawing
-$previewPath = Join-Path $ReleaseRoot "workshop-preview.png"
-$logoPath = Join-Path $ProjectRoot "ui\lumi-chat-addon.png"
-$sourceImage = [Drawing.Image]::FromFile($logoPath)
-$bitmap = [Drawing.Bitmap]::new(512, 512)
-$graphics = [Drawing.Graphics]::FromImage($bitmap)
-try {
-    $graphics.CompositingQuality = [Drawing.Drawing2D.CompositingQuality]::HighQuality
-    $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-    $graphics.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-    $graphics.DrawImage($sourceImage, 0, 0, 512, 512)
-    $bitmap.Save($previewPath, [Drawing.Imaging.ImageFormat]::Png)
-}
-finally {
-    $graphics.Dispose()
-    $bitmap.Dispose()
-    $sourceImage.Dispose()
-}
 
 $checksumTargets = @($helperPath, $pluginJar, $workshopZip, $uninstallerZip)
 $checksumLines = foreach ($target in $checksumTargets) {

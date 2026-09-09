@@ -13,7 +13,7 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
 RELEASE = PROJECT / "release"
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 HELPER = RELEASE / f"lumi-chat-addon-helper-v{VERSION}-windows-x64.exe"
 PLUGIN = RELEASE / "workshop-content" / "plugins" / "lumi.chat.addon.jar"
 WORKSHOP_ZIP = RELEASE / f"LUMI-Chat-Addon-v{VERSION}-workshop.zip"
@@ -88,6 +88,7 @@ def test_artifacts() -> None:
             "META-INF/services/com.group_finity.mascot.lumi.plugin.LumiPlugin",
             "com/snowtie/lumichataddon/LumiChatAddonPlugin.class",
             "com/snowtie/lumichataddon/LumiChatTransformer.class",
+            "com/group_finity/mascot/lumi/ai/TtsClient.class",
             "tts-setup.ps1",
             "tts-runtimes.json",
         }
@@ -96,14 +97,19 @@ def test_artifacts() -> None:
         check(descriptor["id"] == "lumi.chat.addon", "wrong plugin id")
         check(descriptor["version"] == VERSION, "wrong plugin version")
         check(descriptor["dependencies"] == ["lumi.ai"], "LUMI Chat dependency missing")
+        check(not any("tts." in hook for hook in descriptor["hooks"]), "obsolete TTS hooks remain")
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / "tts-setup.ps1"
             script.write_bytes(jar.read("tts-setup.ps1"))
             parse_powershell(script)
+            script_text = script.read_text(encoding="utf-8")
+            check('.Split("`t", 5)' not in script_text, "voice index metadata can leak into prompt text")
+            check('$columns[4].Trim()' in script_text, "voice index text column is not selected")
 
     with zipfile.ZipFile(WORKSHOP_ZIP) as package:
         names = {name.replace("\\", "/") for name in package.namelist()}
         check("plugins/lumi.chat.addon.jar" in names, "Workshop package has no plugin JAR")
+        check("workshop-preview.png" in names, "Workshop package has no upload preview")
         check({"LICENSE", "NOTICE.txt", "VOICE_MODEL_NOTICE.txt"} <= names, "Workshop notices are missing")
         check(not any(name.lower().endswith(".exe") for name in names), "Workshop package must not contain EXEs")
         check(not any("install.ps1" in name.lower() for name in names), "Workshop package contains an installer")

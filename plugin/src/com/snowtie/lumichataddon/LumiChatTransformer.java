@@ -18,33 +18,22 @@ import java.security.ProtectionDomain;
 
 import static java.lang.constant.ConstantDescs.CD_Object;
 import static java.lang.constant.ConstantDescs.CD_String;
-import static java.lang.constant.ConstantDescs.CD_boolean;
 
 final class LumiChatTransformer implements LumiTransformer {
-    private static final String TTS_CLIENT = "com/group_finity/mascot/lumi/ai/TtsClient";
     private static final String SETTINGS_DIALOG = "com/group_finity/mascot/lumi/ai/AiSettingsDialog";
     private static final ClassDesc HOOKS = ClassDesc.of("com.group_finity.mascot.lumi.plugin.PluginHooks");
-    private static final ClassDesc PCM_AUDIO = ClassDesc.of("com.group_finity.mascot.lumi.plugin.PcmAudio");
     private static final ClassDesc OBJECT_ARRAY = CD_Object.arrayType();
-    private static final MethodTypeDesc DECIDE_BOOLEAN =
-            MethodTypeDesc.of(CD_boolean, CD_String, CD_boolean, OBJECT_ARRAY);
     private static final MethodTypeDesc DECIDE =
             MethodTypeDesc.of(CD_Object, CD_String, CD_Object, OBJECT_ARRAY);
 
-    private final String configuredHook;
-    private final String synthesizeHook;
     private final String dialogInitHook;
     private final String dialogLoadHook;
     private final String dialogApplyHook;
 
     LumiChatTransformer(
-            String configuredHook,
-            String synthesizeHook,
             String dialogInitHook,
             String dialogLoadHook,
             String dialogApplyHook) {
-        this.configuredHook = configuredHook;
-        this.synthesizeHook = synthesizeHook;
         this.dialogInitHook = dialogInitHook;
         this.dialogLoadHook = dialogLoadHook;
         this.dialogApplyHook = dialogApplyHook;
@@ -53,7 +42,7 @@ final class LumiChatTransformer implements LumiTransformer {
     @Override
     public boolean wants(String className) {
         String normalized = className.replace('.', '/');
-        return TTS_CLIENT.equals(normalized) || SETTINGS_DIALOG.equals(normalized);
+        return SETTINGS_DIALOG.equals(normalized);
     }
 
     @Override
@@ -91,13 +80,7 @@ final class LumiChatTransformer implements LumiTransformer {
         String name = method.methodName().stringValue();
         String descriptor = method.methodType().stringValue();
         CodeTransform transform = null;
-        if (TTS_CLIENT.equals(className) && name.equals("configured") && descriptor.equals("()Z")) {
-            transform = prepend(this::emitConfiguredGuard);
-        } else if (TTS_CLIENT.equals(className)
-                && name.equals("synthesize")
-                && descriptor.equals("(Ljava/lang/String;Ljava/lang/String;)Lcom/group_finity/mascot/lumi/plugin/PcmAudio;")) {
-            transform = prepend(this::emitSynthesizeGuard);
-        } else if (SETTINGS_DIALOG.equals(className) && name.equals("<init>")) {
+        if (SETTINGS_DIALOG.equals(className) && name.equals("<init>")) {
             transform = beforeReturn(dialogInitHook);
         } else if (SETTINGS_DIALOG.equals(className) && descriptor.equals("()V")) {
             String hook = switch (name) {
@@ -116,20 +99,6 @@ final class LumiChatTransformer implements LumiTransformer {
         builder.transformMethod(method, MethodTransform.transformingCode(transform));
     }
 
-    private static CodeTransform prepend(java.util.function.Consumer<CodeBuilder> injection) {
-        return CodeTransform.ofStateful(() -> new CodeTransform() {
-            @Override
-            public void atStart(CodeBuilder builder) {
-                injection.accept(builder);
-            }
-
-            @Override
-            public void accept(CodeBuilder builder, CodeElement element) {
-                builder.with(element);
-            }
-        });
-    }
-
     private CodeTransform beforeReturn(String hook) {
         return CodeTransform.ofStateful(() -> (builder, element) -> {
             if (element instanceof ReturnInstruction instruction && instruction.opcode() == Opcode.RETURN) {
@@ -137,50 +106,6 @@ final class LumiChatTransformer implements LumiTransformer {
             }
             builder.with(element);
         });
-    }
-
-    private void emitConfiguredGuard(CodeBuilder builder) {
-        var original = builder.newLabel();
-        builder.ldc(configuredHook)
-                .iconst_0()
-                .iconst_0()
-                .anewarray(CD_Object)
-                .invokestatic(HOOKS, "decideBoolean", DECIDE_BOOLEAN)
-                .ifeq(original)
-                .iconst_1()
-                .ireturn()
-                .labelBinding(original);
-    }
-
-    private void emitSynthesizeGuard(CodeBuilder builder) {
-        var original = builder.newLabel();
-        builder.ldc(synthesizeHook)
-                .aconst_null()
-                .iconst_4()
-                .anewarray(CD_Object)
-                .dup()
-                .iconst_0()
-                .ldc("text")
-                .aastore()
-                .dup()
-                .iconst_1()
-                .aload(0)
-                .aastore()
-                .dup()
-                .iconst_2()
-                .ldc("character")
-                .aastore()
-                .dup()
-                .iconst_3()
-                .aload(1)
-                .aastore()
-                .invokestatic(HOOKS, "decide", DECIDE)
-                .checkcast(PCM_AUDIO)
-                .dup()
-                .ifnull(original)
-                .areturn()
-                .labelBinding(original)
-                .pop();
     }
 
     private static void emitDialogHook(CodeBuilder builder, String hook) {

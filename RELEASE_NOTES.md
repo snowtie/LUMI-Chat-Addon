@@ -1,10 +1,13 @@
-# LUMI Chat Addon v1.1.0
+# LUMI Chat Addon v1.1.1
 
 ## 수정 사항
 
+- LUMI Voice Pack의 6열 `index.tsv`를 정확히 읽어 참조 대사에 `self:135` 같은 음성 키가 붙지 않도록 수정
+- 이미 오염된 `settings.json`과 LUMI Chat 음성 설정을 시작 시 자동 복구
 - Addon 설정창의 잘린 안내문과 어긋난 카드 배치를 수정
 - GPT-SoVITS 설치를 별도 PowerShell 창으로 표시하고 중복 실행 차단
 - GPT-SoVITS 선택 시 Fish Audio 설정과 이전 Fish 키 오류가 남는 문제 수정
+- LUMI Chat이 먼저 시작된 환경에서도 GPT-SoVITS가 Fish Audio로 잘못 실행되지 않도록 TTS 호환 경로 고정
 
 ## 새 설치 방식
 

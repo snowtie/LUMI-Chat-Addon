@@ -122,7 +122,7 @@ function Find-ReferenceVoice([string]$LumiApp) {
         $rows = @(Get-Content -LiteralPath $index.FullName -Encoding UTF8 | Where-Object { $_ -and -not $_.StartsWith('#') })
         $preferredRows = @($rows | Where-Object { $_.StartsWith("0001f2f71d2f937f`t") }) + $rows
         foreach ($row in $preferredRows) {
-            $columns = $row.Split("`t", 5)
+            $columns = $row.Split("`t")
             if ($columns.Count -lt 5 -or -not $columns[4].Trim()) { continue }
             $audioPath = Join-Path $index.DirectoryName $columns[3]
             if (Test-Path -LiteralPath $audioPath -PathType Leaf) {

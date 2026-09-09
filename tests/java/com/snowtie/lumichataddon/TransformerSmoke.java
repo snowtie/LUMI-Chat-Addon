@@ -40,18 +40,10 @@ public final class TransformerSmoke {
         }
         String prefix = "lumi.chat.addon.";
         LumiChatTransformer transformer = new LumiChatTransformer(
-                prefix + "tts.configured",
-                prefix + "tts.synthesize",
                 prefix + "dialog.init",
                 prefix + "dialog.load",
                 prefix + "dialog.apply");
         try (ZipFile archive = new ZipFile(Path.of(arguments[0]).toFile())) {
-            checkTransformed(
-                    transformer,
-                    read(archive, "com/group_finity/mascot/lumi/ai/TtsClient.class"),
-                    "com/group_finity/mascot/lumi/ai/TtsClient",
-                    prefix + "tts.configured",
-                    prefix + "tts.synthesize");
             checkTransformed(
                     transformer,
                     read(archive, "com/group_finity/mascot/lumi/ai/AiSettingsDialog.class"),
@@ -63,4 +55,3 @@ public final class TransformerSmoke {
         System.out.println("transformer smoke test passed");
     }
 }
-

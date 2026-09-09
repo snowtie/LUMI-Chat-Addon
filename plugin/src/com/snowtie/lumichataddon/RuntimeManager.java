@@ -22,9 +22,9 @@ import java.util.zip.ZipInputStream;
 
 final class RuntimeManager {
     static final String BASE_URL = "http://127.0.0.1:32123";
-    static final String HELPER_NAME = "lumi-chat-addon-helper-v1.1.0-windows-x64.exe";
+    static final String HELPER_NAME = "lumi-chat-addon-helper-v1.1.1-windows-x64.exe";
     private static final String RELEASE =
-            "https://github.com/snowtie/LUMI-Chat-Addon/releases/download/v1.1.0/";
+            "https://github.com/snowtie/LUMI-Chat-Addon/releases/download/v1.1.1/";
     private static final String HELPER_URL = RELEASE + HELPER_NAME;
     private static final String CHECKSUM_URL = RELEASE + "SHA256SUMS.txt";
     private static final String CODEX_VERSION = "0.153.4";

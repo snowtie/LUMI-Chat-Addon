@@ -1,5 +1,6 @@
 param(
     [string]$SdkJar,
+    [string]$LumiChatJar,
     [string]$OutputRoot
 )
 
@@ -23,6 +24,18 @@ $ResolvedSdk = $SdkCandidates | Where-Object { Test-Path -LiteralPath $_ -PathTy
 if (-not $ResolvedSdk) {
     throw "Little LUMI Plugin SDK jar was not found. Pass -SdkJar or set LUMI_PLUGIN_SDK."
 }
+$LumiChatCandidates = @(
+    $LumiChatJar,
+    $env:LUMI_CHAT_JAR,
+    "D:\Steam\steamapps\common\Little LUMI\mods\workshop-3794360578\plugins\lumi.ai.jar",
+    "C:\Program Files (x86)\Steam\steamapps\common\Little LUMI\mods\workshop-3794360578\plugins\lumi.ai.jar"
+) | Where-Object { $_ }
+$ResolvedLumiChat = $LumiChatCandidates |
+    Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+    Select-Object -First 1
+if (-not $ResolvedLumiChat) {
+    throw "LUMI Chat 1.1.0 jar was not found. Pass -LumiChatJar or set LUMI_CHAT_JAR."
+}
 
 $Jdk = Get-ChildItem -LiteralPath "C:\Program Files\Eclipse Adoptium" -Directory -Filter "jdk-25*-hotspot" -ErrorAction SilentlyContinue |
     Sort-Object Name -Descending |
@@ -39,7 +52,8 @@ if (Test-Path -LiteralPath $BuildRoot) {
 New-Item -ItemType Directory -Force -Path $Classes | Out-Null
 $Sources = @(Get-ChildItem -LiteralPath (Join-Path $PluginRoot "src") -Recurse -File -Filter "*.java" | ForEach-Object FullName)
 if ($Sources.Count -eq 0) { throw "Plugin Java sources were not found." }
-& $Javac -encoding UTF-8 -source 25 -target 25 -cp $ResolvedSdk -d $Classes @Sources
+$CompilePath = "$ResolvedSdk;$ResolvedLumiChat"
+& $Javac -encoding UTF-8 -source 25 -target 25 -cp $CompilePath -d $Classes @Sources
 if ($LASTEXITCODE -ne 0) { throw "Plugin compilation failed." }
 
 $PluginsRoot = Join-Path $OutputRoot "plugins"

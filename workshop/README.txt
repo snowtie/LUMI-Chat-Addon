@@ -1,4 +1,4 @@
-LUMI Chat Addon 1.1.0
+LUMI Chat Addon 1.1.1
 =====================
 
 This is an unofficial code plugin extension for LUMI Chat.

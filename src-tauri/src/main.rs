@@ -26,7 +26,7 @@ use uuid::Uuid;
 use std::os::windows::process::CommandExt;
 
 const APP_NAME: &str = "LUMI Chat Addon Helper";
-const VERSION: &str = "1.1.0";
+const VERSION: &str = "1.1.1";
 const HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 32123;
 const DEFAULT_LUMI_APP: &str = r"D:\Steam\steamapps\common\Little LUMI\app";
@@ -538,6 +538,14 @@ fn property_bool(path: &Path, key: &str) -> bool {
     property_value(path, key).is_some_and(|value| value.eq_ignore_ascii_case("true"))
 }
 
+fn clean_reference_prompt_text(text: &str) -> String {
+    text.split('\t')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+}
+
 fn gpt_sovits_settings_from_lumi(settings: &Settings) -> GptSovitsSettings {
     let ai_settings = lumi_ai_settings_path(&lumi_app_dir(settings));
     let mut voice = settings.voice.clone();
@@ -563,6 +571,7 @@ fn gpt_sovits_settings_from_lumi(settings: &Settings) -> GptSovitsSettings {
             *target = value;
         }
     }
+    voice.prompt_text = clean_reference_prompt_text(&voice.prompt_text);
     voice.power_mode = match property_value(&ai_settings, "tts.gpt_sovits.power_mode").as_deref() {
         Some("ultra_saver") => VoicePowerMode::UltraSaver,
         _ => VoicePowerMode::Balanced,
@@ -607,7 +616,7 @@ fn gpt_sovits_configuration(
         gpt_weights_path,
         sovits_weights_path,
         reference_audio_path,
-        prompt_text,
+        prompt_text: clean_reference_prompt_text(&prompt_text),
         ..GptSovitsSettings::default()
     };
     voice.base_url = "http://127.0.0.1:9880".to_owned();
@@ -719,7 +728,16 @@ fn synchronize_voice_settings(settings: &mut Settings) -> AppResult<bool> {
     let ai_settings = lumi_ai_settings_path(&app_dir);
     let managed = property_bool(&ai_settings, VOICE_MANAGED_KEY)
         || property_bool(&ai_settings, LEGACY_VOICE_MANAGED_KEY);
+    let stored_prompt_text =
+        property_value(&ai_settings, "tts.gpt_sovits.reference_text").unwrap_or_default();
     let native_voice = gpt_sovits_settings_from_lumi(settings);
+    if stored_prompt_text != native_voice.prompt_text {
+        let cleaned = java_property_value(&native_voice.prompt_text);
+        update_properties(
+            &ai_settings,
+            &[("tts.gpt_sovits.reference_text", cleaned.as_str())],
+        )?;
+    }
     let local_complete = voice_configuration_complete(&settings.voice);
     let native_complete = voice_configuration_complete(&native_voice);
 
@@ -974,14 +992,15 @@ fn resolve_gpt_sovits_runtime(voice: &GptSovitsSettings) -> AppResult<GptSovitsR
             (!voice.runtime_dir.trim().is_empty()).then(|| PathBuf::from(voice.runtime_dir.trim()))
         })
         .unwrap_or_else(|| data_root.join("gpt-sovits"));
-    let mut roots = Vec::new();
+    let mut candidates = vec![configured.clone()];
     if environment_root.is_none() {
         if let Some(selected) = selected_gpt_sovits_runtime_root_at(&data_root) {
-            roots.push(selected);
+            candidates.push(selected);
         }
     }
-    roots.push(configured.clone());
-    for parent in roots.clone() {
+    let mut roots = Vec::new();
+    for parent in candidates {
+        roots.push(parent.clone());
         if let Ok(entries) = fs::read_dir(&parent) {
             roots.extend(
                 entries
@@ -1417,7 +1436,7 @@ fn gpt_sovits_settings_from_payload(payload: &Value) -> AppResult<GptSovitsSetti
         gpt_weights_path: text("gpt_weights_path", ""),
         sovits_weights_path: text("sovits_weights_path", ""),
         reference_audio_path: text("reference_audio_path", ""),
-        prompt_text: text("prompt_text", ""),
+        prompt_text: clean_reference_prompt_text(&text("prompt_text", "")),
         text_language: text("text_language", "ko"),
         prompt_language: text("prompt_language", "ko"),
         speed_factor,
@@ -1435,6 +1454,7 @@ fn fetch_gpt_sovits_wav(voice: &GptSovitsSettings, text: &str) -> AppResult<Vec<
     if text.is_empty() {
         return Err("읽을 문장이 비어 있습니다.".into());
     }
+    let prompt_text = clean_reference_prompt_text(&voice.prompt_text);
     let _request = begin_gpt_sovits_request(voice)?;
     ensure_gpt_sovits_weights(voice)?;
     let endpoint = gpt_sovits_endpoint(&voice.base_url)?;
@@ -1442,7 +1462,7 @@ fn fetch_gpt_sovits_wav(voice: &GptSovitsSettings, text: &str) -> AppResult<Vec<
         "text": text,
         "text_lang": voice.text_language.trim(),
         "ref_audio_path": voice.reference_audio_path.trim(),
-        "prompt_text": voice.prompt_text.trim(),
+        "prompt_text": prompt_text,
         "prompt_lang": voice.prompt_language.trim(),
         "text_split_method": "cut5",
         "batch_size": 1,
@@ -3130,8 +3150,9 @@ mod tests {
         fs::create_dir_all(root.join("speech")).unwrap();
         fs::create_dir_all(root.join("conf")).unwrap();
         fs::write(root.join("Shimeji-ee.jar"), b"test").unwrap();
+        let ai_settings = root.join("conf").join("ai.properties");
         fs::write(
-            root.join("conf").join("ai.properties"),
+            &ai_settings,
             concat!(
                 "lumi_to_gpt.voice.managed=true\n",
                 "tts.enabled=true\n",
@@ -3141,7 +3162,7 @@ mod tests {
                 "tts.gpt_sovits.gpt_weights=new.ckpt\n",
                 "tts.gpt_sovits.sovits_weights=new.pth\n",
                 "tts.gpt_sovits.reference_audio=new.wav\n",
-                "tts.gpt_sovits.reference_text=새 참조 대사\n",
+                "tts.gpt_sovits.reference_text=새 참조 대사\\tself\\:135\n",
                 "tts.gpt_sovits.text_language=ko\n",
                 "tts.gpt_sovits.prompt_language=ko\n",
                 "tts.gpt_sovits.power_mode=balanced\n",
@@ -3168,6 +3189,10 @@ mod tests {
         assert_eq!(settings.voice.runtime_dir, "new-runtime");
         assert_eq!(settings.voice.gpt_weights_path, "new.ckpt");
         assert_eq!(settings.voice.prompt_text, "새 참조 대사");
+        assert_eq!(
+            property_value(&ai_settings, "tts.gpt_sovits.reference_text").as_deref(),
+            Some("새 참조 대사")
+        );
         assert_eq!(settings.voice.device_mode, VoiceDeviceMode::Cpu);
         assert!((settings.voice.speed_factor - 0.9).abs() < f32::EPSILON);
         fs::remove_dir_all(root).unwrap();
@@ -3216,7 +3241,7 @@ mod tests {
         let payload = json!({
             "text": "GPT가 실제로 답한 문장",
             "reference_audio_path": r"D:\voice\lumi.wav",
-            "prompt_text": "참조 WAV에서 말한 문장",
+            "prompt_text": "참조 WAV에서 말한 문장\tself:135",
             "text_language": "ko",
             "prompt_language": "ko",
             "device_mode": "cpu",
@@ -3228,6 +3253,18 @@ mod tests {
         assert_eq!(payload["text"], "GPT가 실제로 답한 문장");
         assert_eq!(voice.prompt_text, "참조 WAV에서 말한 문장");
         assert_eq!(voice.device_mode, VoiceDeviceMode::Cpu);
+    }
+
+    #[test]
+    fn reference_prompt_text_removes_voice_index_metadata() {
+        assert_eq!(
+            clean_reference_prompt_text("오늘 대회 관전자 수가 신기록을 세웠대요.\tself:135"),
+            "오늘 대회 관전자 수가 신기록을 세웠대요."
+        );
+        assert_eq!(
+            clean_reference_prompt_text("화면 밖으로 나가면 뭐 하고 싶어요\tmeet:327:1"),
+            "화면 밖으로 나가면 뭐 하고 싶어요"
+        );
     }
 
     #[test]

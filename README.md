@@ -45,7 +45,7 @@ LUMI Chat Addon 설정에서 GPT-SoVITS 설치 또는 복구를 누릅니다. �
 
 ## 이전 LUMI to GPT 제거
 
-v1.0.9 이하의 설치형 LUMI to GPT를 썼다면 GitHub Release의 `LUMI-to-GPT-Legacy-Uninstaller-v1.1.0.zip`을 받아 `UNINSTALL.cmd`를 실행하세요.
+v1.0.9 이하의 설치형 LUMI to GPT를 썼다면 GitHub Release의 `LUMI-to-GPT-Legacy-Uninstaller-v1.1.1.zip`을 받아 `UNINSTALL.cmd`를 실행하세요.
 
 제거기는 다음만 처리합니다.
 
@@ -61,15 +61,15 @@ v1.0.9 이하의 설치형 LUMI to GPT를 썼다면 GitHub Release의 `LUMI-to-G
 
 ## 개발
 
-JDK 25와 Rust/Tauri가 필요합니다. Little LUMI 플러그인 SDK JAR을 지정해 빌드할 수 있습니다.
+JDK 25와 Rust/Tauri가 필요합니다. Little LUMI 플러그인 SDK JAR과 LUMI Chat 1.1.0 JAR을 지정해 빌드할 수 있습니다.
 
 ```powershell
 cargo test --manifest-path .\src-tauri\Cargo.toml
-.\plugin\build.ps1 -SdkJar "D:\Steam\steamapps\common\Little LUMI\app\Shimeji-ee.jar"
-.\build.ps1 -SdkJar "D:\Steam\steamapps\common\Little LUMI\app\Shimeji-ee.jar"
+.\plugin\build.ps1 -SdkJar "D:\Steam\steamapps\common\Little LUMI\app\Shimeji-ee.jar" -LumiChatJar "D:\Steam\steamapps\common\Little LUMI\mods\workshop-3794360578\plugins\lumi.ai.jar"
+.\build.ps1 -SdkJar "D:\Steam\steamapps\common\Little LUMI\app\Shimeji-ee.jar" -LumiChatJar "D:\Steam\steamapps\common\Little LUMI\mods\workshop-3794360578\plugins\lumi.ai.jar"
 python .\tests\smoke_release.py
 ```
 
-완성된 창작마당 패키지는 `release\LUMI-Chat-Addon-v1.1.0-workshop.zip`입니다. Steam 항목의 필요 항목에는 LUMI Chat Workshop ID `3794360578`을 지정합니다.
+완성된 창작마당 패키지는 `release\LUMI-Chat-Addon-v1.1.1-workshop.zip`입니다. Steam 항목의 필요 항목에는 LUMI Chat Workshop ID `3794360578`을 지정합니다.
 
 소스 코드는 BSD 3-Clause로 공개합니다. 외부 구성요소와 상표 고지는 [NOTICE.txt](NOTICE.txt)를 확인하세요.

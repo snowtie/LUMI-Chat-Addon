@@ -79,7 +79,7 @@ final class AddonSettingsDialog extends JDialog {
         header.setLayout(new BoxLayout(header, BoxLayout.Y_AXIS));
         header.setAlignmentX(Component.LEFT_ALIGNMENT);
         header.setMaximumSize(new Dimension(Integer.MAX_VALUE, 54));
-        JLabel title = new JLabel("LUMI Chat Addon 1.1.0");
+        JLabel title = new JLabel("LUMI Chat Addon 1.1.1");
         title.setFont(title.getFont().deriveFont(Font.BOLD, title.getFont().getSize2D() + 4f));
         title.setAlignmentX(Component.LEFT_ALIGNMENT);
         JLabel intro = new JLabel("대화와 기억은 LUMI Chat이 맡고, 이 플러그인은 계정과 로컬 음성을 연결합니다.");
