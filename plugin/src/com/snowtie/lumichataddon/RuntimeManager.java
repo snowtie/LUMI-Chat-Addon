@@ -22,9 +22,9 @@ import java.util.zip.ZipInputStream;
 
 final class RuntimeManager {
     static final String BASE_URL = "http://127.0.0.1:32123";
-    static final String HELPER_NAME = "lumi-chat-addon-helper-v1.1.1-windows-x64.exe";
+    static final String HELPER_NAME = "lumi-chat-addon-helper-v1.1.2-windows-x64.exe";
     private static final String RELEASE =
-            "https://github.com/snowtie/LUMI-Chat-Addon/releases/download/v1.1.1/";
+            "https://github.com/snowtie/LUMI-Chat-Addon/releases/download/v1.1.2/";
     private static final String HELPER_URL = RELEASE + HELPER_NAME;
     private static final String CHECKSUM_URL = RELEASE + "SHA256SUMS.txt";
     private static final String CODEX_VERSION = "0.153.4";
@@ -72,6 +72,7 @@ final class RuntimeManager {
         ProcessBuilder builder = new ProcessBuilder(executable.toString(), "--headless");
         builder.environment().put("LUMI_APP_DIR", appDir().toString());
         builder.environment().put("LUMI_CHAT_ADDON_DATA_DIR", dataRoot.toString());
+        builder.environment().put("LUMI_HELPER_PARENT_PIPE", "1");
         builder.redirectError(dataRoot.resolve("helper-error.log").toFile());
         builder.redirectOutput(dataRoot.resolve("helper.log").toFile());
         helper = builder.start();
@@ -159,11 +160,15 @@ final class RuntimeManager {
 
     synchronized void stop() {
         if (helper != null && helper.isAlive()) {
-            helper.destroy();
             try {
-                if (!helper.waitFor(3, TimeUnit.SECONDS)) {
+                helper.getOutputStream().close();
+                if (!helper.waitFor(5, TimeUnit.SECONDS)) {
                     helper.destroyForcibly();
+                    helper.waitFor(3, TimeUnit.SECONDS);
                 }
+            } catch (IOException error) {
+                context.log().warning("Helper shutdown pipe: " + error.getMessage());
+                helper.destroyForcibly();
             } catch (InterruptedException error) {
                 Thread.currentThread().interrupt();
                 helper.destroyForcibly();
@@ -304,18 +309,24 @@ final class RuntimeManager {
     }
 
     private void download(String url, Path target) throws Exception {
+        download(http, url, target);
+    }
+
+    static void download(HttpClient http, String url, Path target) throws Exception {
         Files.createDirectories(target.getParent());
-        Files.deleteIfExists(target);
+        Path temporary = Files.createTempFile(target.getParent(), target.getFileName().toString(), ".download");
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofMinutes(30))
                 .GET()
                 .build();
-        HttpResponse<Path> response = http.send(
-                request,
-                HttpResponse.BodyHandlers.ofFile(target));
-        if (response.statusCode() / 100 != 2) {
-            Files.deleteIfExists(target);
-            throw new IOException("다운로드 HTTP " + response.statusCode() + ": " + url);
+        try {
+            HttpResponse<Path> response = http.send(request, HttpResponse.BodyHandlers.ofFile(temporary));
+            if (response.statusCode() / 100 != 2) {
+                throw new IOException("다운로드 HTTP " + response.statusCode() + ": " + url);
+            }
+            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(temporary);
         }
     }
 

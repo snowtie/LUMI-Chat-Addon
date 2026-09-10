@@ -1,7 +1,7 @@
 {
   "id": "lumi.chat.addon",
   "name": "LUMI Chat Addon",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "author": "snowtie",
   "description": "Unofficial LUMI Chat extension for ChatGPT and Claude account backends plus optional local LUMI GPT-SoVITS voice.",
   "dependencies": ["lumi.ai"],

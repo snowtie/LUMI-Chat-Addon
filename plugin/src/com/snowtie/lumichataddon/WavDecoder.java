@@ -26,6 +26,9 @@ final class WavDecoder {
                     false);
             try (AudioInputStream pcm = AudioSystem.getAudioInputStream(pcmFormat, source)) {
                 byte[] data = pcm.readNBytes(MAX_PCM_BYTES + 1);
+                if (data.length == 0) {
+                    throw new IllegalStateException("GPT-SoVITS가 빈 음성을 반환했습니다.");
+                }
                 if (data.length > MAX_PCM_BYTES) {
                     throw new IllegalStateException("GPT-SoVITS 음성이 64MB를 넘었습니다.");
                 }

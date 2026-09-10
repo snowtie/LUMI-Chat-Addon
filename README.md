@@ -26,12 +26,18 @@ Python과 별도 설치기는 필요하지 않습니다. ChatGPT 연결에는 �
 
 1. 창작마당에서 LUMI Chat과 LUMI Chat Addon을 구독합니다.
 2. Little LUMI를 다시 시작합니다.
-3. 트레이 메뉴 또는 설정 → 모드에서 LUMI Chat Addon 설정을 엽니다.
+3. 설정 → 모드에서 두 모드의 코드 실행을 승인하고 활성화합니다. 재시작 안내가 나오면 다시 시작한 뒤 LUMI Chat Addon 설정을 엽니다.
 4. ChatGPT 계정 연결 또는 Claude 계정 연결을 누르고 공식 로그인 절차를 완료합니다.
 5. 루미 AI 설정 → 두뇌에서 ChatGPT 계정 또는 Claude 계정을 선택합니다.
 6. 꼬미의 기존 말 걸기 창에서 대화합니다.
 
 처음 ChatGPT 연결을 누르면 플러그인이 OpenAI 공식 배포본의 Codex App Server를 내려받고 SHA-256을 검증합니다. Claude 연결을 누르면 설치된 공식 Claude Code를 사용하며, 없다면 Anthropic의 공식 Windows 설치 창을 엽니다. 애드온은 로그인 토큰을 읽거나 저장하지 않습니다.
+
+Claude는 열린 로그인 창에서 연결을 마친 뒤 애드온의 확인 버튼을 눌러 주세요. 로그인 상태가 확인된 경우에만 두뇌가 Claude로 바뀌며, 취소하거나 실패하면 기존 선택을 유지합니다. 로그인 창은 표시하지만 상태 확인·대화·로그아웃은 명령창 없이 실행합니다. 인증 확인은 최대 15초이며, 실패 상세는 Claude 상태 문구에 마우스를 올리면 볼 수 있습니다.
+
+Claude의 기본 모델은 `sonnet`입니다. ChatGPT와 Claude 모두 루미 AI 설정 → 두뇌에서 바꾼 모델은 다시 실행해도 유지됩니다. Claude에는 `opus`, `haiku` 또는 계정에서 지원하는 모델 ID를 입력할 수 있으며, 실제 사용 가능 여부는 Claude의 응답으로 확인합니다. 사용량 제한·모델 접근 오류는 정상 대사로 읽지 않고 오류로 표시합니다. ChatGPT도 로그인 완료 후 확인 버튼을 눌렀을 때만 두뇌가 전환됩니다.
+
+GPT-SoVITS 연결은 원본 LUMI Chat의 TTS 함수에 메모리상 분기를 추가합니다. 원본 JAR를 수정하거나 같은 이름의 TTS 클래스를 덮어쓰지 않으며, 이미 로드된 경우와 나중에 로드되는 경우 모두 처리합니다. 집중 모드의 음성 차단은 유지됩니다. 애드온이 시작한 도우미는 앱과 연결된 파이프가 닫히면 정상 종료하며 관리 중인 GPT-SoVITS도 정리합니다.
 
 새 설치에서는 사용량을 줄이기 위해 자율 혼잣말과 화면 구경이 기본으로 꺼집니다.
 
@@ -45,7 +51,7 @@ LUMI Chat Addon 설정에서 GPT-SoVITS 설치 또는 복구를 누릅니다. �
 
 ## 이전 LUMI to GPT 제거
 
-v1.0.9 이하의 설치형 LUMI to GPT를 썼다면 GitHub Release의 `LUMI-to-GPT-Legacy-Uninstaller-v1.1.1.zip`을 받아 `UNINSTALL.cmd`를 실행하세요.
+v1.0.9 이하의 설치형 LUMI to GPT를 썼다면 GitHub Release의 `LUMI-to-GPT-Legacy-Uninstaller-v1.1.2.zip`을 받아 `UNINSTALL.cmd`를 실행하세요.
 
 제거기는 다음만 처리합니다.
 
@@ -70,6 +76,8 @@ cargo test --manifest-path .\src-tauri\Cargo.toml
 python .\tests\smoke_release.py
 ```
 
-완성된 창작마당 패키지는 `release\LUMI-Chat-Addon-v1.1.1-workshop.zip`입니다. Steam 항목의 필요 항목에는 LUMI Chat Workshop ID `3794360578`을 지정합니다.
+완성된 창작마당 패키지는 `release\LUMI-Chat-Addon-v1.1.2-workshop.zip`입니다. Steam 항목의 필요 항목에는 LUMI Chat Workshop ID `3794360578`을 지정합니다.
+
+로컬 테스트본은 내 모드에서 활성화하고 같은 애드온의 구독본은 꺼 두세요. 구독본 폴더를 직접 덮어쓰면 Steam 동기화 때 기존 배포본으로 돌아갈 수 있습니다. 코드가 바뀌어 실행 승인을 다시 요구하면 모드 탭에서 확인하세요. `DISABLED` 같은 로컬 상태 파일은 배포 패키지에 넣지 않습니다.
 
 소스 코드는 BSD 3-Clause로 공개합니다. 외부 구성요소와 상표 고지는 [NOTICE.txt](NOTICE.txt)를 확인하세요.

@@ -11,7 +11,6 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
-import javax.swing.Timer;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Desktop;
@@ -79,7 +78,7 @@ final class AddonSettingsDialog extends JDialog {
         header.setLayout(new BoxLayout(header, BoxLayout.Y_AXIS));
         header.setAlignmentX(Component.LEFT_ALIGNMENT);
         header.setMaximumSize(new Dimension(Integer.MAX_VALUE, 54));
-        JLabel title = new JLabel("LUMI Chat Addon 1.1.1");
+        JLabel title = new JLabel("LUMI Chat Addon 1.1.2");
         title.setFont(title.getFont().deriveFont(Font.BOLD, title.getFont().getSize2D() + 4f));
         title.setAlignmentX(Component.LEFT_ALIGNMENT);
         JLabel intro = new JLabel("대화와 기억은 LUMI Chat이 맡고, 이 플러그인은 계정과 로컬 음성을 연결합니다.");
@@ -153,26 +152,36 @@ final class AddonSettingsDialog extends JDialog {
         context.offEdt(() -> {
             String chat = "연결 필요";
             String claude = "설치 또는 연결 필요";
+            String claudeError = null;
             String tts = ttsInstalled() ? "설치됨" : "설치 필요";
             try {
                 runtime.ensureStarted();
                 Map<?, ?> state = runtime.client().get("/auth/status");
                 chat = Boolean.TRUE.equals(state.get("connected")) ? "연결됨" : "연결 필요";
-                state = runtime.client().get("/claude/auth/status");
+            } catch (Exception error) {
+                chat = "확인 실패";
+                context.log().warning("ChatGPT settings status: " + error.getMessage());
+            }
+            try {
+                Map<?, ?> state = runtime.client().get("/claude/auth/status");
                 if (Boolean.TRUE.equals(state.get("connected"))) {
                     claude = "연결됨";
                 } else if (Boolean.TRUE.equals(state.get("installed"))) {
                     claude = "연결 필요";
                 }
             } catch (Exception error) {
-                context.log().fine("settings status: " + error.getMessage());
+                claude = "확인 실패 (마우스를 올려 상세 확인)";
+                claudeError = error.getMessage();
+                context.log().warning("Claude settings status: " + error.getMessage());
             }
             String chatResult = chat;
             String claudeResult = claude;
+            String claudeErrorResult = claudeError;
             String ttsResult = tts;
             SwingUtilities.invokeLater(() -> {
                 chatGptStatus.setText(chatResult);
                 claudeStatus.setText(claudeResult);
+                claudeStatus.setToolTipText(claudeErrorResult);
                 ttsStatus.setText(ttsResult);
                 setBusy(false);
             });
@@ -197,18 +206,21 @@ final class AddonSettingsDialog extends JDialog {
                     Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(code), null);
                 }
                 String finalCode = code;
-                SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(
+                int[] choice = { JOptionPane.CANCEL_OPTION };
+                SwingUtilities.invokeAndWait(() -> choice[0] = JOptionPane.showConfirmDialog(
                         this,
                         finalCode.isBlank()
-                                ? "브라우저에서 ChatGPT 계정 연결을 완료해 주세요."
-                                : "로그인 코드 " + finalCode + "를 복사했습니다. 브라우저에 붙여넣어 주세요.",
+                                ? "브라우저에서 ChatGPT 연결을 완료한 뒤 확인을 눌러 주세요."
+                                : "로그인 코드 " + finalCode + "를 복사했습니다.\n브라우저에 붙여넣고 로그인을 완료한 뒤 확인을 눌러 주세요.",
                         "ChatGPT 계정 연결",
+                        JOptionPane.OK_CANCEL_OPTION,
                         JOptionPane.INFORMATION_MESSAGE));
+                if (choice[0] != JOptionPane.OK_OPTION) return;
+                Map<?, ?> status = runtime.client().get("/auth/status");
+                requireConnected(status, "ChatGPT");
                 selectProvider("gpt_web");
                 SwingUtilities.invokeLater(() -> {
-                    Timer timer = new Timer(2000, event -> refresh());
-                    timer.setRepeats(false);
-                    timer.start();
+                    chatGptStatus.setText("연결됨");
                 });
             } catch (Exception error) {
                 showError(error);
@@ -223,12 +235,23 @@ final class AddonSettingsDialog extends JDialog {
         context.offEdt(() -> {
             try {
                 runtime.client().post("/claude/auth/login", Map.of());
-                selectProvider("claude_account");
-                SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(
+                int[] choice = { JOptionPane.CANCEL_OPTION };
+                SwingUtilities.invokeAndWait(() -> choice[0] = JOptionPane.showConfirmDialog(
                         this,
-                        "열린 창에서 Claude Code 설치와 로그인을 끝낸 뒤 새로고침해 주세요.",
-                        "Claude 계정 연결",
+                        "열린 창에서 설치와 로그인을 마친 뒤 확인을 눌러 주세요.\n취소하면 현재 두뇌 설정을 유지합니다.",
+                        "Claude 계정 연결 확인",
+                        JOptionPane.OK_CANCEL_OPTION,
                         JOptionPane.INFORMATION_MESSAGE));
+                if (choice[0] != JOptionPane.OK_OPTION) {
+                    return;
+                }
+                Map<?, ?> state = runtime.client().get("/claude/auth/status");
+                requireConnected(state, "Claude");
+                selectProvider("claude_account");
+                SwingUtilities.invokeLater(() -> {
+                    claudeStatus.setText("연결됨");
+                    claudeStatus.setToolTipText(null);
+                });
             } catch (Exception error) {
                 showError(error);
             } finally {
@@ -275,6 +298,12 @@ final class AddonSettingsDialog extends JDialog {
         Object settings = settingsType.getMethod("get").invoke(null);
         settingsType.getMethod("set", String.class, String.class).invoke(settings, "llm.provider", id);
         settingsType.getMethod("save").invoke(settings);
+    }
+
+    static void requireConnected(Map<?, ?> status, String provider) {
+        if (!Boolean.TRUE.equals(status.get("connected"))) {
+            throw new IllegalStateException(provider + " 로그인이 완료되지 않았습니다. 연결을 마친 뒤 다시 시도해 주세요.");
+        }
     }
 
     private void setBusy(boolean busy) {

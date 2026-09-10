@@ -8,12 +8,13 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+import urllib.error
 import zipfile
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
 RELEASE = PROJECT / "release"
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 HELPER = RELEASE / f"lumi-chat-addon-helper-v{VERSION}-windows-x64.exe"
 PLUGIN = RELEASE / "workshop-content" / "plugins" / "lumi.chat.addon.jar"
 WORKSHOP_ZIP = RELEASE / f"LUMI-Chat-Addon-v{VERSION}-workshop.zip"
@@ -56,6 +57,9 @@ def wait_json(url: str, timeout: float = 15.0) -> dict:
         try:
             with urllib.request.urlopen(url, timeout=1) as response:
                 return json.load(response)
+        except urllib.error.HTTPError as error:
+            last_error = RuntimeError(f"HTTP {error.code}: {error.read().decode('utf-8', errors='replace')}")
+            time.sleep(0.15)
         except Exception as error:
             last_error = error
             time.sleep(0.15)
@@ -88,11 +92,12 @@ def test_artifacts() -> None:
             "META-INF/services/com.group_finity.mascot.lumi.plugin.LumiPlugin",
             "com/snowtie/lumichataddon/LumiChatAddonPlugin.class",
             "com/snowtie/lumichataddon/LumiChatTransformer.class",
-            "com/group_finity/mascot/lumi/ai/TtsClient.class",
             "tts-setup.ps1",
             "tts-runtimes.json",
         }
         check(required <= names, f"plugin JAR entries missing: {required - names}")
+        check("com/group_finity/mascot/lumi/ai/TtsClient.class" not in names,
+              "addon must not shadow the original TtsClient")
         descriptor = json.loads(jar.read("plugin.json"))
         check(descriptor["id"] == "lumi.chat.addon", "wrong plugin id")
         check(descriptor["version"] == VERSION, "wrong plugin version")
@@ -110,6 +115,7 @@ def test_artifacts() -> None:
         names = {name.replace("\\", "/") for name in package.namelist()}
         check("plugins/lumi.chat.addon.jar" in names, "Workshop package has no plugin JAR")
         check("workshop-preview.png" in names, "Workshop package has no upload preview")
+        check(not any(Path(name).name.upper() == "DISABLED" for name in names), "Workshop package contains local disabled state")
         check({"LICENSE", "NOTICE.txt", "VOICE_MODEL_NOTICE.txt"} <= names, "Workshop notices are missing")
         check(not any(name.lower().endswith(".exe") for name in names), "Workshop package must not contain EXEs")
         check(not any("install.ps1" in name.lower() for name in names), "Workshop package contains an installer")
@@ -245,7 +251,9 @@ def test_transformer() -> None:
         java = str(candidates[0] / "java.exe")
     check(bool(javac and java), "JDK 25 was not found")
     source_root = PROJECT / "tests" / "java" / "com" / "snowtie" / "lumichataddon"
-    sources = [source_root / "TransformerSmoke.java", source_root / "DialogBridgeSmoke.java"]
+    sources = [source_root / name for name in (
+        "TransformerSmoke.java", "DialogBridgeSmoke.java", "ClaudeSettingsSmoke.java",
+        "TtsClientSmoke.java", "TtsRoutingSmoke.java", "RuntimeIoSmoke.java")]
     with tempfile.TemporaryDirectory() as directory:
         classes = Path(directory) / "classes"
         classes.mkdir()
@@ -273,6 +281,34 @@ def test_transformer() -> None:
             encoding="utf-8",
         )
         check(dialog_result.returncode == 0, dialog_result.stdout + dialog_result.stderr)
+        claude_settings = subprocess.run(
+            [java, "-cp", os.pathsep.join((str(classes), classpath)),
+             "com.snowtie.lumichataddon.ClaudeSettingsSmoke"],
+            text=True, capture_output=True, encoding="utf-8",
+        )
+        check(claude_settings.returncode == 0, claude_settings.stdout + claude_settings.stderr)
+        agent = Path(directory) / "tts-routing-agent.jar"
+        with zipfile.ZipFile(agent, "w") as archive:
+            archive.writestr("META-INF/MANIFEST.MF",
+                "Manifest-Version: 1.0\nPremain-Class: com.snowtie.lumichataddon.TtsRoutingSmoke\nCan-Retransform-Classes: true\n\n")
+            agent_class = classes / "com/snowtie/lumichataddon/TtsRoutingSmoke.class"
+            archive.write(agent_class, "com/snowtie/lumichataddon/TtsRoutingSmoke.class")
+        for order in ((sdk, chat, PLUGIN), (sdk, PLUGIN, chat)):
+            for mode in ("preloaded", "onload"):
+                result = subprocess.run(
+                    [java, f"-javaagent:{agent}", "-cp", os.pathsep.join(map(str, (classes, *order))),
+                     "com.snowtie.lumichataddon.TtsRoutingSmoke", mode],
+                    cwd=directory, text=True, capture_output=True, encoding="utf-8", timeout=20,
+                )
+                check(result.returncode == 0, result.stdout + result.stderr)
+        print("TTS routing: both JAR orders, preloaded/onload and repeated retransformation passed")
+        io_result = subprocess.run(
+            [java, "-cp", os.pathsep.join((str(classes), classpath)),
+             "com.snowtie.lumichataddon.RuntimeIoSmoke", directory],
+            cwd=directory, text=True, capture_output=True, encoding="utf-8", timeout=20,
+        )
+        check(io_result.returncode == 0, io_result.stdout + io_result.stderr)
+        print(io_result.stdout.strip())
 
 
 def test_helper_runtime() -> None:
@@ -280,18 +316,11 @@ def test_helper_runtime() -> None:
         root = Path(directory)
         rustc = shutil.which("rustc")
         check(bool(rustc), "rustc was not found for the Claude mock")
-        mock_source = root / "mock_claude.rs"
+        mock_source = PROJECT / "tests" / "fixtures" / "mock_claude.rs"
         mock_exe = root / "mock-claude.exe"
-        mock_source.write_text(
-            'use std::io::{self, Read};\n'
-            'fn main(){let a:Vec<String>=std::env::args().collect();'
-            'if a.get(1).map(String::as_str)==Some("auth") && a.get(2).map(String::as_str)==Some("status")'
-            '{println!(r#"{{"loggedIn":true,"email":"mock@example.test"}}"#);return;}'
-            'let mut p=String::new();io::stdin().read_to_string(&mut p).unwrap();'
-            'if p.contains("테스트"){println!(r#"{{"result":"mock claude reply"}}"#);}'
-            'else{std::process::exit(2)}}\n',
-            encoding="utf-8",
-        )
+        mock_mode = root / "mode.txt"
+        mock_log = root / "calls.txt"
+        mock_mode.write_text("ok", encoding="utf-8")
         compile_mock = subprocess.run(
             [rustc, str(mock_source), "-O", "-o", str(mock_exe)],
             text=True,
@@ -320,6 +349,8 @@ def test_helper_runtime() -> None:
         environment["LUMI_CHAT_ADDON_DATA_DIR"] = str(data)
         environment["LUMI_ALLOW_TEST_SHUTDOWN"] = "1"
         environment["LUMI_CLAUDE_CLI"] = str(mock_exe)
+        environment["LUMI_CLAUDE_TEST_MODE"] = str(mock_mode)
+        environment["LUMI_CLAUDE_TEST_LOG"] = str(mock_log)
         process = subprocess.Popen(
             [str(HELPER), "--headless"],
             env=environment,
@@ -333,14 +364,54 @@ def test_helper_runtime() -> None:
             check(health["name"] == "LUMI Chat Addon Helper", "helper branding is stale")
             claude_status = wait_json(f"http://127.0.0.1:{port}/claude/auth/status")
             check(claude_status["connected"] is True, "Claude account status bridge failed")
-            claude_reply = post_json(
-                f"http://127.0.0.1:{port}/claude/v1/chat/completions",
-                {"model": "sonnet", "messages": [{"role": "user", "content": "테스트"}]},
-            )
-            check(
-                claude_reply["choices"][0]["message"]["content"] == "mock claude reply",
-                "Claude completion bridge failed",
-            )
+            completion_url = f"http://127.0.0.1:{port}/claude/v1/chat/completions"
+            for model in ("sonnet", "opus", "haiku", "claude-sonnet-4-6", "sonnet[1m]"):
+                claude_reply = post_json(completion_url,
+                    {"model": model, "messages": [{"role": "user", "content": "테스트"}]})
+                check(claude_reply["choices"][0]["message"]["content"] == f"mock claude reply: {model}",
+                      f"Claude model was not forwarded: {model}")
+
+            def expect_error(url: str, expected: str, payload: dict | None = None,
+                             timeout: float = 5) -> None:
+                request = urllib.request.Request(url,
+                    data=json.dumps(payload).encode() if payload is not None else None,
+                    headers={"Content-Type": "application/json"})
+                try:
+                    with urllib.request.urlopen(request, timeout=timeout) as response:
+                        raise AssertionError(f"expected error but received {response.status}")
+                except urllib.error.HTTPError as error:
+                    body = json.load(error)
+                    check(error.code >= 400 and expected in str(body), f"missing error detail: {body}")
+
+            message = {"model": "sonnet", "messages": [{"role": "user", "content": "테스트"}]}
+            for mode, expected in (("limit", "usage limit reached"), ("model_error", "model unavailable"),
+                                   ("subtype_error", "permission denied"), ("bad_json", "JSON"),
+                                   ("empty", "비어"), ("stderr_error", "network unavailable")):
+                mock_mode.write_text(mode, encoding="utf-8")
+                expect_error(completion_url, expected, message)
+            mock_mode.write_text("auth_off", encoding="utf-8")
+            check(wait_json(f"http://127.0.0.1:{port}/claude/auth/status")["connected"] is False,
+                  "logged-out status was not preserved")
+            expect_error(completion_url, "계정 연결", message)
+            for mode, expected in (("auth_bad", "올바르지"), ("auth_error", "auth unavailable")):
+                mock_mode.write_text(mode, encoding="utf-8")
+                expect_error(f"http://127.0.0.1:{port}/claude/auth/status", expected)
+            mock_mode.write_text("ok", encoding="utf-8")
+            before = mock_log.read_text(encoding="utf-8")
+            expect_error(completion_url, "모델 이름", {**message, "model": "--help"})
+            check(mock_log.read_text(encoding="utf-8") == before, "invalid model launched Claude")
+            check(post_json(f"http://127.0.0.1:{port}/claude/auth/logout", {})["ok"] is True,
+                  "Claude logout failed")
+            mock_mode.write_text("logout_error", encoding="utf-8")
+            expect_error(f"http://127.0.0.1:{port}/claude/auth/logout", "logout denied", {})
+            mock_mode.write_text("auth_timeout", encoding="utf-8")
+            started = time.monotonic()
+            expect_error(f"http://127.0.0.1:{port}/claude/auth/status", "초과", timeout=40)
+            check(time.monotonic() - started < 38, "auth timeout was not enforced")
+            mock_mode.write_text("ok", encoding="utf-8")
+            check(wait_json(f"http://127.0.0.1:{port}/claude/auth/status")["connected"] is True,
+                  "Claude did not recover after timeout")
+            print("Claude bridge: hidden Windows processes, model forwarding, auth, errors and timeout passed")
             properties = ai.read_text(encoding="utf-8")
             check("llm.provider=claude_account" in properties, "helper overwrote the selected Claude provider")
             result = post_json(
@@ -354,6 +425,22 @@ def test_helper_runtime() -> None:
             if process.poll() is None:
                 process.kill()
                 process.wait(timeout=5)
+        environment["LUMI_HELPER_PARENT_PIPE"] = "1"
+        owned_helper = subprocess.Popen(
+            [str(HELPER), "--headless"], env=environment, stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        try:
+            wait_json(f"http://127.0.0.1:{port}/health")
+            owned_helper.stdin.close()
+            owned_helper.wait(timeout=8)
+            check(owned_helper.returncode == 0, "helper failed to stop after parent pipe closed")
+            print("Helper parent-pipe shutdown passed")
+        finally:
+            if owned_helper.poll() is None:
+                owned_helper.kill()
+                owned_helper.wait(timeout=5)
 
 
 def main() -> None:

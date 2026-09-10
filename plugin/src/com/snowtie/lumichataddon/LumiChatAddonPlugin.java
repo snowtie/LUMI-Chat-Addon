@@ -12,7 +12,7 @@ import java.util.Properties;
 
 public final class LumiChatAddonPlugin implements LumiPlugin {
     public static final String ID = "lumi.chat.addon";
-    public static final String VERSION = "1.1.1";
+    public static final String VERSION = "1.1.2";
     private static final String DIALOG_INIT_HOOK = ID + ".dialog.init";
     private static final String DIALOG_LOAD_HOOK = ID + ".dialog.load";
     private static final String DIALOG_APPLY_HOOK = ID + ".dialog.apply";
@@ -73,14 +73,12 @@ public final class LumiChatAddonPlugin implements LumiPlugin {
             Object settings = settingsType.getMethod("get").invoke(null);
             settingsType.getMethod("set", String.class, String.class)
                     .invoke(settings, "llm.base.gpt_web", RuntimeManager.BASE_URL + "/v1");
-            settingsType.getMethod("set", String.class, String.class)
-                    .invoke(settings, "llm.model.gpt_web", "gpt-5.6-luna");
+            initializeModel(settings, "gpt_web", "gpt-5.6-luna");
             settingsType.getMethod("set", String.class, String.class)
                     .invoke(settings, "llm.key.gpt_web", "account");
             settingsType.getMethod("set", String.class, String.class)
                     .invoke(settings, "llm.base.claude_account", RuntimeManager.BASE_URL + "/claude/v1");
-            settingsType.getMethod("set", String.class, String.class)
-                    .invoke(settings, "llm.model.claude_account", "sonnet");
+            initializeClaudeModel(settings);
             settingsType.getMethod("set", String.class, String.class)
                     .invoke(settings, "llm.key.claude_account", "account");
             if (!context.prefs().getBoolean("provider_initialized", false)) {
@@ -98,6 +96,19 @@ public final class LumiChatAddonPlugin implements LumiPlugin {
         }
     }
 
+    static void initializeClaudeModel(Object settings) throws ReflectiveOperationException {
+        initializeModel(settings, "claude_account", "sonnet");
+    }
+
+    static void initializeModel(Object settings, String provider, String fallback) throws ReflectiveOperationException {
+        Class<?> type = settings.getClass();
+        String model = (String) type.getMethod("llmModelFor", String.class).invoke(settings, provider);
+        if (model == null || model.isBlank()) {
+            type.getMethod("set", String.class, String.class)
+                    .invoke(settings, "llm.model." + provider, fallback);
+        }
+    }
+
     private void registerHooks() {
         context.hook(DIALOG_INIT_HOOK, this::dialogHook);
         context.hook(DIALOG_LOAD_HOOK, this::dialogHook);
@@ -107,9 +118,19 @@ public final class LumiChatAddonPlugin implements LumiPlugin {
     public static boolean gptSovitsConfigured() {
         LumiChatAddonPlugin plugin = active;
         return plugin != null
-                && "gpt_sovits".equals(plugin.ttsProvider())
-                && !plugin.context.quietNow()
-                && plugin.voiceSettings().getProperty("tts.enabled", "false").equals("true");
+                && gptSovitsSelected();
+    }
+
+    public static boolean gptSovitsSelected() {
+        try {
+            Class<?> type = Class.forName("com.group_finity.mascot.lumi.ai.AiSettings");
+            Object settings = type.getMethod("get").invoke(null);
+            var getter = type.getDeclaredMethod("get", String.class, String.class);
+            getter.setAccessible(true);
+            return "gpt_sovits".equals(getter.invoke(settings, "tts.provider", "fish"));
+        } catch (ReflectiveOperationException error) {
+            throw new IllegalStateException("LUMI Chat TTS 설정을 읽지 못했습니다. 호환 버전을 확인해 주세요.", error);
+        }
     }
 
     public static PcmAudio synthesizeGptSovits(String text, String character) throws Exception {
@@ -117,7 +138,7 @@ public final class LumiChatAddonPlugin implements LumiPlugin {
         if (plugin == null) {
             throw new IllegalStateException("LUMI Chat Addon이 아직 시작되지 않았습니다.");
         }
-        if (!"gpt_sovits".equals(plugin.ttsProvider())) {
+        if (!gptSovitsSelected()) {
             throw new IllegalStateException("GPT-SoVITS가 선택되지 않았습니다.");
         }
         if (plugin.context.quietNow()) {
@@ -145,10 +166,6 @@ public final class LumiChatAddonPlugin implements LumiPlugin {
         return dialog;
     }
 
-    private String ttsProvider() {
-        return voiceSettings().getProperty("tts.provider", "fish").trim();
-    }
-
     private Properties voiceSettings() {
         Properties properties = new Properties();
         Path path = context.dataDir().toAbsolutePath().normalize().getParent()
@@ -159,7 +176,7 @@ public final class LumiChatAddonPlugin implements LumiPlugin {
         try (var reader = Files.newBufferedReader(path)) {
             properties.load(reader);
         } catch (Exception error) {
-            context.log().fine("voice settings unavailable: " + error.getMessage());
+            throw new IllegalStateException("음성 설정 파일을 읽지 못했습니다: " + path, error);
         }
         return properties;
     }
@@ -177,6 +194,16 @@ public final class LumiChatAddonPlugin implements LumiPlugin {
             throw new IllegalStateException("Little LUMI 플러그인 변환기를 등록하지 못했습니다.");
         }
         ClassFileTransformer adapter = transformer.asClassFileTransformer();
+        // 이미 원본 클래스가 로드된 경우에도 같은 분기를 적용합니다.
+        try {
+            Class.forName("com.group_finity.mascot.lumi.ai.TtsClient");
+        } catch (ClassNotFoundException error) {
+            throw new IllegalStateException("LUMI Chat TTS 클래스를 찾지 못했습니다.", error);
+        }
+        if (!context.patch("com.group_finity.mascot.lumi.ai.TtsClient", adapter)) {
+            throw new IllegalStateException("GPT-SoVITS TTS 연결을 적용하지 못했습니다. Little LUMI를 다시 실행해 주세요.");
+        }
+        context.log().info("GPT-SoVITS routing applied to LUMI Chat TtsClient");
         context.patch("com.group_finity.mascot.lumi.ai.AiSettingsDialog", adapter);
     }
 }

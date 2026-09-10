@@ -1,4 +1,4 @@
-LUMI Chat Addon 1.1.1
+LUMI Chat Addon 1.1.2
 =====================
 
 This is an unofficial code plugin extension for LUMI Chat.
@@ -7,7 +7,8 @@ Requirements
 1. Subscribe to LUMI Chat (Workshop ID 3794360578).
 2. Subscribe to LUMI Chat Addon.
 3. Restart Little LUMI.
-4. Open LUMI Chat Addon settings from the tray or Mods settings.
+4. Approve code execution and enable both mods in Mods settings. Restart if
+   prompted, then open LUMI Chat Addon settings from the tray or Mods settings.
 5. Connect a ChatGPT or Claude account.
 6. Select the account provider in LUMI AI Settings > Brain.
 

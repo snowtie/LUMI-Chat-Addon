@@ -18,6 +18,7 @@ final class DialogBridge {
     private static final String UI_BOUND = "lumi.chat.addon.tts.ui.bound";
     private static final String FISH_PANEL = "lumi.chat.addon.tts.ui.fish";
     private static final String ELEVEN_PANEL = "lumi.chat.addon.tts.ui.eleven";
+    private static final String CUSTOM_PANEL = "lumi.chat.addon.tts.ui.custom";
     private static final String FISH_SITE_BUTTON = "lumi.chat.addon.tts.ui.fishSite";
     private static final String STATUS_LABEL = "lumi.chat.addon.tts.ui.status";
 
@@ -65,6 +66,13 @@ final class DialogBridge {
 
         provider.putClientProperty(FISH_PANEL, fishPanel);
         provider.putClientProperty(ELEVEN_PANEL, elevenPanel);
+        try {
+            provider.putClientProperty(CUSTOM_PANEL, commonPanel(
+                    component(dialog, "customTtsBase"), component(dialog, "customTtsModel"),
+                    component(dialog, "customTtsVoice"), component(dialog, "customTtsKey")));
+        } catch (NoSuchFieldException ignored) {
+            // 이전 LUMI Chat에는 사용자 지정 TTS 항목이 없습니다.
+        }
         provider.putClientProperty(FISH_SITE_BUTTON, fishSiteButton);
         provider.putClientProperty(STATUS_LABEL, statusLabel);
         provider.addActionListener(event -> syncProviderUi(provider));
@@ -115,8 +123,11 @@ final class DialogBridge {
     private static void syncProviderUi(JComboBox<String> provider) {
         boolean gptSovits = LABEL.equals(provider.getSelectedItem());
         boolean eleven = "ElevenLabs".equals(provider.getSelectedItem());
-        setVisible(provider.getClientProperty(FISH_PANEL), !gptSovits && !eleven);
+        boolean custom = !gptSovits && provider.getClientProperty(CUSTOM_PANEL) != null
+                && provider.getSelectedIndex() == 2;
+        setVisible(provider.getClientProperty(FISH_PANEL), !gptSovits && !eleven && !custom);
         setVisible(provider.getClientProperty(ELEVEN_PANEL), !gptSovits && eleven);
+        setVisible(provider.getClientProperty(CUSTOM_PANEL), custom);
         setVisible(provider.getClientProperty(FISH_SITE_BUTTON), !gptSovits);
         if (gptSovits) {
             clearStaleFishError(provider.getClientProperty(STATUS_LABEL));

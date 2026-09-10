@@ -21,6 +21,9 @@ import static java.lang.constant.ConstantDescs.CD_String;
 
 final class LumiChatTransformer implements LumiTransformer {
     private static final String SETTINGS_DIALOG = "com/group_finity/mascot/lumi/ai/AiSettingsDialog";
+    private static final String TTS_CLIENT = "com/group_finity/mascot/lumi/ai/TtsClient";
+    private static final ClassDesc ADDON = ClassDesc.of("com.snowtie.lumichataddon.LumiChatAddonPlugin");
+    private static final ClassDesc PCM_AUDIO = ClassDesc.of("com.group_finity.mascot.lumi.plugin.PcmAudio");
     private static final ClassDesc HOOKS = ClassDesc.of("com.group_finity.mascot.lumi.plugin.PluginHooks");
     private static final ClassDesc OBJECT_ARRAY = CD_Object.arrayType();
     private static final MethodTypeDesc DECIDE =
@@ -42,7 +45,7 @@ final class LumiChatTransformer implements LumiTransformer {
     @Override
     public boolean wants(String className) {
         String normalized = className.replace('.', '/');
-        return SETTINGS_DIALOG.equals(normalized);
+        return SETTINGS_DIALOG.equals(normalized) || TTS_CLIENT.equals(normalized);
     }
 
     @Override
@@ -51,6 +54,10 @@ final class LumiChatTransformer implements LumiTransformer {
             return bytes;
         }
         String normalized = className.replace('.', '/');
+        if (TTS_CLIENT.equals(normalized)
+                && new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1).contains("gptSovitsSelected")) {
+            return bytes;
+        }
         ClassFile classFile = ClassFile.of();
         return classFile.transformClass(
                 classFile.parse(bytes),
@@ -80,8 +87,15 @@ final class LumiChatTransformer implements LumiTransformer {
         String name = method.methodName().stringValue();
         String descriptor = method.methodType().stringValue();
         CodeTransform transform = null;
-        if (SETTINGS_DIALOG.equals(className) && name.equals("<init>")) {
+        if (TTS_CLIENT.equals(className) && name.equals("configured") && descriptor.equals("()Z")) {
+            transform = ttsEntry(true);
+        } else if (TTS_CLIENT.equals(className) && name.equals("synthesize")
+                && descriptor.equals("(Ljava/lang/String;Ljava/lang/String;)Lcom/group_finity/mascot/lumi/plugin/PcmAudio;")) {
+            transform = ttsEntry(false);
+        } else if (SETTINGS_DIALOG.equals(className) && name.equals("<init>")) {
             transform = beforeReturn(dialogInitHook);
+        } else if (SETTINGS_DIALOG.equals(className) && name.equals("apply") && descriptor.equals("()Z")) {
+            transform = beforeSuccessfulReturn(dialogApplyHook);
         } else if (SETTINGS_DIALOG.equals(className) && descriptor.equals("()V")) {
             String hook = switch (name) {
                 case "load" -> dialogLoadHook;
@@ -103,6 +117,41 @@ final class LumiChatTransformer implements LumiTransformer {
         return CodeTransform.ofStateful(() -> (builder, element) -> {
             if (element instanceof ReturnInstruction instruction && instruction.opcode() == Opcode.RETURN) {
                 emitDialogHook(builder, hook);
+            }
+            builder.with(element);
+        });
+    }
+
+    private static CodeTransform ttsEntry(boolean configured) {
+        return new CodeTransform() {
+            @Override
+            public void atStart(CodeBuilder builder) {
+                builder.invokestatic(ADDON, "gptSovitsSelected", MethodTypeDesc.ofDescriptor("()Z"))
+                        .ifThen(branch -> {
+                            if (configured) {
+                                branch.invokestatic(ADDON, "gptSovitsConfigured", MethodTypeDesc.ofDescriptor("()Z"))
+                                        .ireturn();
+                            } else {
+                                branch.aload(0).aload(1)
+                                        .invokestatic(ADDON, "synthesizeGptSovits",
+                                                MethodTypeDesc.of(PCM_AUDIO, CD_String, CD_String))
+                                        .areturn();
+                            }
+                        });
+            }
+
+            @Override
+            public void accept(CodeBuilder builder, CodeElement element) {
+                builder.with(element);
+            }
+        };
+    }
+
+    private static CodeTransform beforeSuccessfulReturn(String hook) {
+        return CodeTransform.ofStateful(() -> (builder, element) -> {
+            if (element instanceof ReturnInstruction instruction && instruction.opcode() == Opcode.IRETURN) {
+                // 새 LUMI Chat의 검증 실패(false)는 보존하고 저장 성공 때만 애드온 설정을 반영합니다.
+                builder.dup().ifThen(branch -> emitDialogHook(branch, hook));
             }
             builder.with(element);
         });

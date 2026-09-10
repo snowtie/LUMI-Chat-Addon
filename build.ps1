@@ -11,7 +11,7 @@ if (Test-Path -LiteralPath variable:PSNativeCommandUseErrorActionPreference) {
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TauriRoot = Join-Path $ProjectRoot "src-tauri"
 $ReleaseRoot = Join-Path $ProjectRoot "release"
-$Version = "1.1.1"
+$Version = "1.1.2"
 $HelperAsset = "lumi-chat-addon-helper-v$Version-windows-x64.exe"
 $WorkshopArchive = "LUMI-Chat-Addon-v$Version-workshop.zip"
 $UninstallerArchive = "LUMI-to-GPT-Legacy-Uninstaller-v$Version.zip"

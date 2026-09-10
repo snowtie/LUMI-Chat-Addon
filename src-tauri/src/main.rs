@@ -26,7 +26,7 @@ use uuid::Uuid;
 use std::os::windows::process::CommandExt;
 
 const APP_NAME: &str = "LUMI Chat Addon Helper";
-const VERSION: &str = "1.1.1";
+const VERSION: &str = "1.1.2";
 const HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 32123;
 const DEFAULT_LUMI_APP: &str = r"D:\Steam\steamapps\common\Little LUMI\app";
@@ -250,9 +250,6 @@ fn write_settings_unlocked(settings: &Settings) -> AppResult<()> {
     if read_settings(&path).is_some() {
         fs::copy(&path, settings_backup_path())?;
     }
-    if path.exists() {
-        fs::remove_file(&path)?;
-    }
     fs::rename(temporary, path)?;
     Ok(())
 }
@@ -321,7 +318,11 @@ fn is_lumi_chat_unlocked(app_dir: &Path) -> bool {
 }
 
 fn update_properties(path: &Path, updates: &[(&str, &str)]) -> AppResult<()> {
-    let original = fs::read_to_string(path).unwrap_or_default();
+    let original = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.into()),
+    };
     let mut seen = vec![false; updates.len()];
     let mut lines = Vec::new();
     for line in original.lines() {
@@ -358,7 +359,12 @@ fn update_properties(path: &Path, updates: &[(&str, &str)]) -> AppResult<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, updated)?;
+    let temporary = path.with_extension(format!("properties.{}.tmp", Uuid::new_v4().simple()));
+    fs::write(&temporary, updated)?;
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error.into());
+    }
     Ok(())
 }
 
@@ -386,13 +392,14 @@ fn configure_lumi_chat(settings: &Settings) -> AppResult<PathBuf> {
             })
         })
     });
-    let mut updates = vec![
-        ("llm.base.gpt_web".to_owned(), base_url),
-        (
+    let mut updates = vec![("llm.base.gpt_web".to_owned(), base_url)];
+    if property_value(&ai_settings, "llm.model.gpt_web").is_none_or(|model| model.trim().is_empty())
+    {
+        updates.push((
             "llm.model.gpt_web".to_owned(),
             DEFAULT_CODEX_MODEL.to_owned(),
-        ),
-    ];
+        ));
+    }
     if property_value(&ai_settings, "llm.provider").is_none() {
         updates.push(("llm.provider".to_owned(), "gpt_web".to_owned()));
     }
@@ -1228,7 +1235,9 @@ fn ensure_gpt_sovits_server(voice: &GptSovitsSettings) -> AppResult<()> {
     wait_for_gpt_sovits(&base_url)
 }
 
-struct GptSovitsRequest;
+struct GptSovitsRequest {
+    _serial: std::sync::MutexGuard<'static, ()>,
+}
 
 impl Drop for GptSovitsRequest {
     fn drop(&mut self) {
@@ -1242,8 +1251,10 @@ impl Drop for GptSovitsRequest {
 }
 
 fn begin_gpt_sovits_request(voice: &GptSovitsSettings) -> AppResult<GptSovitsRequest> {
+    static SYNTHESIS: Mutex<()> = Mutex::new(());
+    let serial = SYNTHESIS.lock().map_err(|_| "GPT-SoVITS 합성 잠금 오류")?;
     ACTIVE_GPT_SOVITS_REQUESTS.fetch_add(1, Ordering::SeqCst);
-    let request = GptSovitsRequest;
+    let request = GptSovitsRequest { _serial: serial };
     ensure_gpt_sovits_server(voice)?;
     Ok(request)
 }
@@ -1970,28 +1981,40 @@ fn claude_command() -> PathBuf {
             return installed;
         }
     }
+    if let Some(paths) = env::var_os("PATH") {
+        for directory in env::split_paths(&paths) {
+            let installed = directory.join("claude.exe");
+            if installed.is_file() {
+                return installed;
+            }
+        }
+    }
     PathBuf::from("claude")
 }
 
 fn claude_account_status() -> AppResult<Value> {
-    let executable = claude_command();
-    let output = Command::new(&executable)
-        .args(["auth", "status"])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| {
-            format!(
-                "Claude Code를 찾지 못했습니다. 계정 연결 버튼에서 공식 Claude Code를 설치해 주세요: {error}"
-            )
-        })?;
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let parsed = serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({}));
-    let connected = output.status.success()
-        && parsed
-            .get("loggedIn")
-            .and_then(Value::as_bool)
-            .or_else(|| parsed.get("authenticated").and_then(Value::as_bool))
-            .unwrap_or(false);
+    let mut command = Command::new(claude_command());
+    command.args(["auth", "status"]);
+    let output = run_claude_command(&mut command, None, Duration::from_secs(15))?;
+    parse_claude_account_status(&output)
+}
+
+fn parse_claude_account_status(output: &std::process::Output) -> AppResult<Value> {
+    let parsed: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
+        format!(
+            "Claude 인증 상태 응답이 올바르지 않습니다: {}",
+            claude_error_detail(output)
+        )
+    })?;
+    let logged_in = parsed
+        .get("loggedIn")
+        .and_then(Value::as_bool)
+        .or_else(|| parsed.get("authenticated").and_then(Value::as_bool));
+    // 공식 CLI의 미로그인 응답(exit 1)은 실행 실패와 구분합니다.
+    if !(output.status.success() || (output.status.code() == Some(1) && logged_in == Some(false))) {
+        return Err(format!("Claude 인증 확인 실패: {}", claude_error_detail(output)).into());
+    }
+    let connected = logged_in.ok_or("Claude 인증 응답에 로그인 상태가 없습니다.")?;
     Ok(json!({
         "connected": connected,
         "installed": true,
@@ -2001,6 +2024,18 @@ fn claude_account_status() -> AppResult<Value> {
 }
 
 fn start_claude_login() -> AppResult<Value> {
+    static LOGIN: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+    let mut login = LOGIN
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|_| "Claude 로그인 상태를 확인하지 못했습니다.")?;
+    if let Some(child) = login.as_mut() {
+        if child.try_wait()?.is_none() {
+            return Ok(
+                json!({"ok":true,"message":"이미 열린 Claude 로그인 창에서 연결을 완료해 주세요."}),
+            );
+        }
+    }
     let executable = claude_command();
     let mut command = if executable.is_file() {
         let mut command = Command::new(executable);
@@ -2019,23 +2054,19 @@ fn start_claude_login() -> AppResult<Value> {
     };
     #[cfg(windows)]
     command.creation_flags(0x00000010);
-    command
-        .spawn()
-        .map_err(|error| format!("Claude Code 설치 및 로그인 창을 열지 못했습니다: {error}"))?;
+    *login =
+        Some(command.spawn().map_err(|error| {
+            format!("Claude Code 설치 및 로그인 창을 열지 못했습니다: {error}")
+        })?);
     Ok(json!({"ok":true,"message":"Claude Code 로그인 창을 열었습니다."}))
 }
 
 fn logout_claude() -> AppResult<Value> {
-    let output = Command::new(claude_command())
-        .args(["auth", "logout"])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| format!("Claude Code 로그아웃을 실행하지 못했습니다: {error}"))?;
+    let mut command = Command::new(claude_command());
+    command.args(["auth", "logout"]);
+    let output = run_claude_command(&mut command, None, Duration::from_secs(15))?;
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr)
-            .trim()
-            .to_owned()
-            .into());
+        return Err(format!("Claude 로그아웃 실패: {}", claude_error_detail(&output)).into());
     }
     Ok(json!({"ok":true}))
 }
@@ -2049,29 +2080,37 @@ fn read_limited(mut reader: impl Read, limit: usize) -> Vec<u8> {
     if data.len() > limit {
         data.truncate(limit);
     }
+    // 제한을 넘긴 출력도 비워서 자식 프로세스의 파이프가 막히지 않게 합니다.
+    let _ = io::copy(&mut reader, &mut io::sink());
     data
 }
 
-fn claude_complete(model: &str, mut prompt: String, images: Vec<String>) -> AppResult<String> {
-    claude_account_status().and_then(|status| {
-        if status["connected"].as_bool() == Some(true) {
-            Ok(())
-        } else {
-            Err("Claude 계정 연결이 필요합니다. LUMI Chat Addon 설정에서 연결해 주세요.".into())
-        }
-    })?;
-    let model = match model.trim() {
-        "" | "claude-account" => "sonnet",
+fn claude_model(model: &str) -> AppResult<&str> {
+    match model.trim() {
+        "" | "claude-account" => Ok("sonnet"),
         configured
             if configured.len() <= 128
+                && !configured.starts_with(['-', '['])
                 && configured
+                    .strip_suffix("[1m]")
+                    .unwrap_or(configured)
                     .bytes()
                     .all(|value| value.is_ascii_alphanumeric() || b"._:-".contains(&value)) =>
         {
-            configured
+            Ok(configured)
         }
-        _ => return Err("Claude 모델 이름이 올바르지 않습니다.".into()),
-    };
+        _ => Err("Claude 모델 이름이 올바르지 않습니다.".into()),
+    }
+}
+
+fn claude_complete(model: &str, mut prompt: String, images: Vec<String>) -> AppResult<String> {
+    let started = Instant::now();
+    let model = claude_model(model)?;
+    if claude_account_status()?["connected"].as_bool() != Some(true) {
+        return Err(
+            "Claude 계정 연결이 필요합니다. LUMI Chat Addon 설정에서 연결해 주세요.".into(),
+        );
+    }
     let workspace = local_data_dir().join("claude-workspace");
     let image_files = TemporaryCodexImages::create(&workspace, images)?;
     if !image_files.paths.is_empty() {
@@ -2103,20 +2142,37 @@ fn claude_complete(model: &str, mut prompt: String, images: Vec<String>) -> AppR
             },
             "--no-session-persistence",
         ])
-        .current_dir(&workspace)
-        .stdin(Stdio::piped())
+        .current_dir(&workspace);
+    let output = run_claude_command(
+        &mut command,
+        Some(prompt),
+        REQUEST_TIMEOUT.saturating_sub(started.elapsed()),
+    )?;
+    parse_claude_completion(&output)
+}
+
+fn run_claude_command(
+    command: &mut Command,
+    input: Option<String>,
+    timeout: Duration,
+) -> AppResult<std::process::Output> {
+    command
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(windows)]
     command.creation_flags(0x08000000);
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("Claude Code를 실행하지 못했습니다: {error}"))?;
-    child
-        .stdin
-        .take()
-        .ok_or("Claude Code 입력을 열지 못했습니다.")?
-        .write_all(prompt.as_bytes())?;
+    let mut child = command.spawn().map_err(|error| {
+        format!("Claude Code를 실행하지 못했습니다. 설치 및 연결 상태를 확인해 주세요: {error}")
+    })?;
+    let writer = input.map(|input| {
+        let mut stdin = child.stdin.take().expect("piped Claude stdin");
+        thread::spawn(move || stdin.write_all(input.as_bytes()))
+    });
     let stdout = child
         .stdout
         .take()
@@ -2127,30 +2183,95 @@ fn claude_complete(model: &str, mut prompt: String, images: Vec<String>) -> AppR
         .ok_or("Claude Code 오류 출력을 열지 못했습니다.")?;
     let stdout_reader = thread::spawn(move || read_limited(stdout, 4 * 1024 * 1024));
     let stderr_reader = thread::spawn(move || read_limited(stderr, 512 * 1024));
-    let deadline = Instant::now() + REQUEST_TIMEOUT;
+    let deadline = Instant::now() + timeout;
+    let mut timed_out = false;
     let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error.into());
+            }
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
-            let _ = child.wait();
-            return Err("Claude 응답 시간이 초과되었습니다.".into());
+            timed_out = true;
+            break child.wait()?;
         }
         thread::sleep(Duration::from_millis(100));
     };
     let stdout = stdout_reader.join().unwrap_or_default();
     let stderr = stderr_reader.join().unwrap_or_default();
-    if !status.success() {
-        let message = String::from_utf8_lossy(&stderr).trim().to_owned();
-        return Err(if message.is_empty() {
-            format!("Claude Code가 종료 코드 {status}로 끝났습니다.").into()
-        } else {
-            format!("Claude Code 오류: {message}").into()
-        });
+    let write_result = writer.map(|writer| {
+        writer
+            .join()
+            .unwrap_or_else(|_| Err(io::Error::other("Claude 입력 작업 실패")))
+    });
+    if timed_out {
+        return Err("Claude 실행 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.".into());
     }
-    let payload: Value = serde_json::from_slice(&stdout)
+    if status.success() {
+        if let Some(result) = write_result {
+            result?;
+        }
+    }
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn claude_error_detail(output: &std::process::Output) -> String {
+    let payload = serde_json::from_slice::<Value>(&output.stdout).unwrap_or(Value::Null);
+    let structured = payload
+        .get("errors")
+        .filter(|value| match value {
+            Value::Null => false,
+            Value::Array(values) => !values.is_empty(),
+            Value::String(text) => !text.trim().is_empty(),
+            _ => true,
+        })
+        .map(Value::to_string)
+        .or_else(|| {
+            payload
+                .get("result")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    let message = structured
+        .filter(|text| !text.trim().is_empty())
+        .unwrap_or_else(|| {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.trim().is_empty() {
+                String::from_utf8_lossy(&output.stdout).trim().to_owned()
+            } else {
+                stderr.trim().to_owned()
+            }
+        });
+    if message.is_empty() {
+        format!("종료 코드 {}", output.status)
+    } else {
+        message.chars().take(2000).collect()
+    }
+}
+
+fn parse_claude_completion(output: &std::process::Output) -> AppResult<String> {
+    if !output.status.success() {
+        return Err(format!("Claude Code 오류: {}", claude_error_detail(output)).into());
+    }
+    let payload: Value = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("Claude Code JSON 응답을 읽지 못했습니다: {error}"))?;
+    if payload.get("is_error").and_then(Value::as_bool) == Some(true)
+        || payload
+            .get("subtype")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.starts_with("error"))
+    {
+        return Err(format!("Claude Code 오류: {}", claude_error_detail(output)).into());
+    }
     let text = payload
         .get("result")
         .and_then(Value::as_str)
@@ -2398,8 +2519,8 @@ fn handle_request(mut request: Request, context: HttpContext) {
             Ok(status) => respond_json(request, 200, status),
             Err(error) => respond_json(
                 request,
-                200,
-                json!({"connected":false,"installed":false,"error":error.to_string()}),
+                502,
+                json!({"connected":false,"installed":claude_command().is_file(),"error":error.to_string()}),
             ),
         }
         return;
@@ -2931,6 +3052,14 @@ fn real_main() -> AppResult<()> {
     }
     let server = start_http_server(settings.clone())?;
     if arguments.iter().any(|value| value == "--headless") {
+        if env::var("LUMI_HELPER_PARENT_PIPE").as_deref() == Ok("1") {
+            let parent_stop = server.stop.clone();
+            thread::spawn(move || {
+                let mut buffer = [0u8; 64];
+                while io::stdin().read(&mut buffer).is_ok_and(|length| length > 0) {}
+                parent_stop.store(true, Ordering::SeqCst);
+            });
+        }
         let shared_settings = Arc::new(Mutex::new(settings));
         let voice_monitor_stop = Arc::new(AtomicBool::new(false));
         let voice_monitor =
@@ -2953,6 +3082,116 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_properties_are_not_overwritten() {
+        let directory = env::temp_dir().join(format!("lumi-properties-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("ai.properties");
+        fs::write(&path, [0xff, 0xfe, 0xff]).unwrap();
+        assert!(update_properties(&path, &[("llm.model.gpt_web", "model")]).is_err());
+        assert_eq!(fs::read(&path).unwrap(), [0xff, 0xfe, 0xff]);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn claude_output(code: u32, stdout: &str, stderr: &str) -> std::process::Output {
+        use std::os::windows::process::ExitStatusExt;
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(code),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn claude_models_preserve_aliases_and_explicit_ids() {
+        for model in ["sonnet", "opus", "haiku", "claude-sonnet-4-6", "sonnet[1m]"] {
+            assert_eq!(claude_model(model).unwrap(), model);
+        }
+        assert_eq!(claude_model("").unwrap(), "sonnet");
+        for invalid in ["--help", "[1m]", "sonnet;exit", "opus blah", "sonnet[bad]"] {
+            assert!(claude_model(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn claude_auth_distinguishes_logged_out_and_broken_cli() {
+        assert_eq!(
+            parse_claude_account_status(&claude_output(0, r#"{"loggedIn":true}"#, "")).unwrap()
+                ["connected"],
+            true
+        );
+        assert_eq!(
+            parse_claude_account_status(&claude_output(1, r#"{"loggedIn":false}"#, "")).unwrap()
+                ["connected"],
+            false
+        );
+        for output in [
+            claude_output(0, "not json", ""),
+            claude_output(0, "{}", ""),
+            claude_output(2, r#"{"loggedIn":false}"#, "auth crashed"),
+            claude_output(1, r#"{"loggedIn":true}"#, "auth failed"),
+        ] {
+            assert!(parse_claude_account_status(&output).is_err());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn claude_completion_rejects_errors_and_keeps_details() {
+        assert_eq!(
+            parse_claude_completion(&claude_output(
+                0,
+                r#"{"result":"안녕하세요","is_error":false}"#,
+                ""
+            ))
+            .unwrap(),
+            "안녕하세요"
+        );
+        for output in [
+            claude_output(0, r#"{"result":"usage limit reached","is_error":true}"#, ""),
+            claude_output(1, r#"{"result":"usage limit reached"}"#, ""),
+            claude_output(
+                0,
+                r#"{"subtype":"error_during_execution","errors":["usage limit reached"]}"#,
+                "",
+            ),
+            claude_output(1, "", "usage limit reached"),
+        ] {
+            assert!(parse_claude_completion(&output)
+                .unwrap_err()
+                .to_string()
+                .contains("usage limit reached"));
+        }
+        for text in ["not json", "{}", r#"{"result":" "}"#] {
+            assert!(parse_claude_completion(&claude_output(0, text, "")).is_err());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn claude_process_timeout_kills_and_reaps_child() {
+        let started = Instant::now();
+        let mut command = Command::new("powershell.exe");
+        command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 20"]);
+        let error = run_claude_command(&mut command, None, Duration::from_millis(300)).unwrap_err();
+        assert!(error.to_string().contains("초과"));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn claude_missing_executable_is_an_error() {
+        let mut command =
+            Command::new(env::temp_dir().join(format!("missing-claude-{}.exe", Uuid::new_v4())));
+        assert!(
+            run_claude_command(&mut command, None, Duration::from_secs(1))
+                .unwrap_err()
+                .to_string()
+                .contains("설치 및 연결")
+        );
+    }
 
     #[test]
     fn prompt_keeps_roles_and_one_image() {
@@ -3073,6 +3312,16 @@ mod tests {
         assert!(updated.contains("chatter.enabled=false"));
         assert!(updated.contains("screenwatch.enabled=false"));
         assert!(updated.contains("tts.gpt_sovits.device_mode=auto"));
+        update_properties(
+            &ai_settings,
+            &[("llm.model.gpt_web", "user-selected-model")],
+        )
+        .unwrap();
+        configure_lumi_chat(&settings).unwrap();
+        assert_eq!(
+            property_value(&ai_settings, "llm.model.gpt_web").as_deref(),
+            Some("user-selected-model")
+        );
         assert_eq!(
             fs::read_to_string(ai_settings.with_extension("properties.lumi-chat-addon.bak"))
                 .unwrap(),
